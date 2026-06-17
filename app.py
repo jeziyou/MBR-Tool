@@ -1,10 +1,11 @@
 import streamlit as st
 import os
-import subprocess
-import threading
-import time
+import base64
 import requests
-import atexit
+import json
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+import threading
 
 st.set_page_config(
     page_title="三菱化学MBR膜设计工具",
@@ -13,95 +14,117 @@ st.set_page_config(
 )
 
 # ============================================================
-# Backend Server Management
+# Email Sending Configuration
 # ============================================================
-def start_backend():
-    """启动Flask后端服务"""
-    backend_path = os.path.join(os.path.dirname(__file__), "backend.py")
-    proc = subprocess.Popen(
-        ["python", backend_path],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    # Wait for backend to start
-    for _ in range(10):
-        try:
-            resp = requests.get("http://localhost:8502/health", timeout=1)
-            if resp.status_code == 200:
-                return proc
-        except Exception:
-            time.sleep(0.5)
-    return proc
-
-
-def stop_backend():
-    """停止后端服务"""
-    if "backend_proc" in st.session_state:
-        st.session_state.backend_proc.terminate()
-        st.session_state.backend_proc = None
-
-
-# Initialize backend
-if "backend_proc" not in st.session_state:
-    st.session_state.backend_proc = start_backend()
-    atexit.register(stop_backend)
+RESEND_API_KEY = "re_H7RY9sKy_BC1N6hNun5iYykHYygj1gvYv"
+RESEND_API_URL = "https://api.resend.com/emails"
+SENDER_EMAIL = "MBR设计工具 <onboarding@resend.dev>"
 
 # ============================================================
-# Sidebar: SMTP configuration
+# Flask app for email endpoint
+# ============================================================
+flask_app = Flask(__name__)
+CORS(flask_app)
+
+@flask_app.route("/api/send-email", methods=["POST"])
+def send_email():
+    try:
+        email_to = request.form.get("email", "").strip()
+        project_name = request.form.get("project_name", "MBR膜系统工艺计算书")
+        file_type = request.form.get("file_type", "pdf")
+
+        if not email_to:
+            return jsonify({"success": False, "error": "邮箱地址不能为空"}), 400
+
+        if "file" not in request.files:
+            return jsonify({"success": False, "error": "未找到附件文件"}), 400
+
+        file = request.files["file"]
+        file_data = file.read()
+        file_name = file.filename or f"{project_name}.{file_type}"
+
+        if not RESEND_API_KEY:
+            return jsonify({
+                "success": False,
+                "error": "Resend API Key 未配置"
+            }), 400
+
+        payload = {
+            "from": SENDER_EMAIL,
+            "to": [email_to],
+            "subject": f"{project_name} - 计算书",
+            "html": f"""
+            <h2>{project_name}</h2>
+            <p>您好，</p>
+            <p>这是由三菱化学MBR膜设计工具自动生成的工艺计算书，请查收附件。</p>
+            <p>文件格式：{file_type.upper()}</p>
+            <hr>
+            <p style="color:#999;font-size:12px;">此邮件由 MBR膜设计工具 - STERAPORE 自动发送</p>
+            """,
+            "attachments": [
+                {
+                    "filename": file_name,
+                    "content": base64.b64encode(file_data).decode("utf-8"),
+                }
+            ],
+        }
+
+        resp = requests.post(
+            RESEND_API_URL,
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {RESEND_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            timeout=30,
+        )
+
+        if resp.status_code == 200:
+            return jsonify({"success": True, "message": f"邮件已发送至 {email_to}"})
+        else:
+            error_detail = resp.text[:300]
+            return jsonify({"success": False, "error": f"Resend API错误 ({resp.status_code}): {error_detail}"}), 500
+
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@flask_app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"status": "ok"})
+
+@flask_app.route("/api/config", methods=["GET", "POST"])
+def config():
+    if request.method == "POST":
+        return jsonify({"success": True, "configured": True, "sender": SENDER_EMAIL})
+    return jsonify({"configured": True, "sender": SENDER_EMAIL})
+
+def start_flask():
+    flask_app.run(host="0.0.0.0", port=8502, debug=False, use_reloader=False)
+
+# Start Flask in background thread
+flask_thread = threading.Thread(target=start_flask, daemon=True)
+flask_thread.start()
+
+# Wait a bit for Flask to start
+import time
+time.sleep(2)
+
+# ============================================================
+# Sidebar: Configuration
 # ============================================================
 with st.sidebar:
     st.title("邮件发送配置")
     st.markdown("---")
-    st.caption("配置SMTP服务器以使用邮件发送功能")
-
-    smtp_host = st.text_input("SMTP服务器", value="smtp.qq.com", key="smtp_host")
-    smtp_port = st.number_input("端口", value=587, min_value=1, max_value=65535, key="smtp_port")
-    smtp_user = st.text_input("发件邮箱", value="", placeholder="your@email.com", key="smtp_user")
-    smtp_password = st.text_input("邮箱密码/授权码", value="", type="password", key="smtp_pass")
-    smtp_tls = st.checkbox("使用TLS", value=True, key="smtp_tls")
-
-    if st.button("保存配置"):
-        try:
-            resp = requests.post(
-                "http://localhost:8502/api/config",
-                json={
-                    "host": smtp_host,
-                    "port": int(smtp_port),
-                    "user": smtp_user,
-                    "password": smtp_password,
-                    "use_tls": smtp_tls,
-                },
-                timeout=5,
-            )
-            if resp.status_code == 200:
-                st.success("SMTP配置已保存")
-            else:
-                st.error("保存失败")
-        except Exception as e:
-            st.error(f"无法连接后端服务: {e}")
-
-    # Show current config status
-    try:
-        resp = requests.get("http://localhost:8502/api/config", timeout=3)
-        if resp.status_code == 200:
-            config = resp.json()
-            if config.get("configured"):
-                st.success(f"已配置: {config['host']}:{config['port']}")
-            else:
-                st.warning("SMTP尚未配置，邮件发送功能不可用")
-    except Exception:
-        st.warning("后端服务未就绪")
-
+    st.success("邮件发送服务已配置完成")
+    st.caption(f"发件人: {SENDER_EMAIL}")
     st.markdown("---")
-    st.caption("提示: QQ邮箱请使用授权码而非密码")
+    st.info("邮件将自动发送至 jeziyou@qq.com")
 
 # ============================================================
 # Main content: Embed HTML
 # ============================================================
-# Read HTML file
 html_path = os.path.join(os.path.dirname(__file__), "MBR_Tool .html")
 with open(html_path, "r", encoding="utf-8") as f:
     html_content = f.read()
 
-# Embed the HTML content
 st.components.v1.html(html_content, height=8000, scrolling=True)
