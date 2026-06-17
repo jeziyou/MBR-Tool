@@ -127,256 +127,9 @@ st.markdown("在左侧调整设计参数，点击下方按钮生成计算书。"
 
 st.markdown("---")
 
-# === 主按钮：生成PDF（后台同时生成 Word 和发送邮件） ===
-col_btn, col_status = st.columns([1, 2])
-
-with col_btn:
-    generate_clicked = st.button("📄 生成PDF计算书", use_container_width=True, type="primary")
-
-status_container = col_status.empty()
-
-# ====== 计算与输出 ======
-if generate_clicked:
-    try:
-        status_container.info("⏳ 正在计算...")
-
-        # 1. 构造输入
-        inp = ProcessInput(
-            Q=inp_Q, Kz=inp_Kz,
-            cod_in=inp_cod, bod_in=inp_bod, nh3n_in=inp_nh3n,
-            ss_in=inp_ss, tn_in=inp_tn, tp_in=inp_tp,
-            ph_value=inp_ph, T=inp_T, MLSS=inp_MLSS,
-            model_index=inp_model_idx,
-            sheets_per_rack=int(inp_sheets),
-            pools=int(inp_pools),
-            racks_per_pool=int(inp_racks),
-            J25=inp_J25, fouling_factor=inp_fouling, SAD=inp_SAD,
-            suction_on=inp_suction_on, suction_off=inp_suction_off,
-            pool_level=inp_pool_level, pipe_loss=inp_pipe_loss,
-            permeate_pump_head=inp_pump_head, permeate_pump_eff=inp_pump_eff,
-            return_ratio=inp_return_ratio,
-            return_pump_head=inp_return_head, return_pump_eff=inp_return_eff,
-            fan_efficiency=inp_fan_eff,
-            enable_bio_blower=False,
-        )
-
-        # 2. 计算
-        result = compute_process(inp)
-
-        status_container.info("📄 正在生成 PDF / Word ...")
-
-        # 3. 生成 PDF
-        pdf_data = generate_pdf_report(
-            inp, result, project_name=project_name,
-            designer=designer, design_date=design_date,
-        )
-
-        # 4. 生成 Word（后台）
-        word_data = generate_word_report(
-            inp, result, project_name=project_name,
-            designer=designer, design_date=design_date,
-        )
-
-        # 5. 邮件发送（后台静默）
-        email_status = "⏳ 邮件发送中..."
-        status_container.success(
-            f"✅ 生成完成！PDF 已就绪下载（{len(pdf_data)//1024} KB）<br>"
-            f"⏳ 后台正在发送邮件 ...",
-        )
-
-        try:
-            RESEND_API_KEY = "re_H7RY9sKy_BC1N6hNun5iYykHYygj1gvYv"
-            SENDER_EMAIL = "MBR设计工具 <onboarding@resend.dev>"
-            DEFAULT_RECIPIENT = "jeziyou@qq.com"
-
-            email_payload = {
-                "from": SENDER_EMAIL,
-                "to": [DEFAULT_RECIPIENT],
-                "subject": f"{project_name} - 工艺计算书",
-                "html": (
-                    f"<h2>{project_name}</h2>"
-                    f"<p>您好，</p>"
-                    f"<p>这是由三菱化学MBR膜设计工具自动生成的工艺计算书，"
-                    f"请查收附件（PDF + Word）。</p>"
-                    f"<hr><p style='color:#666;font-size:12px;'>"
-                    f"设计流量：{int(inp_Q)} m³/d　|　膜面积：{int(result.a_actual)} m²<br>"
-                    f"平均通量：{result.j_avg:.1f} LMH　|　总功率：{result.total_power:.1f} kW</p>"
-                    f"<p style='color:#999;font-size:12px;'>此邮件由 MBR膜设计工具 - STERAPORE 自动发送</p>"
-                ),
-                "attachments": [
-                    {
-                        "filename": f"{project_name}.pdf",
-                        "content": base64.b64encode(pdf_data).decode("utf-8"),
-                    },
-                    {
-                        "filename": f"{project_name}.docx",
-                        "content": base64.b64encode(word_data).decode("utf-8"),
-                    },
-                ],
-            }
-            resp = requests.post(
-                "https://api.resend.com/emails",
-                json=email_payload,
-                headers={
-                    "Authorization": f"Bearer {RESEND_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                timeout=30,
-            )
-            if resp.status_code == 200:
-                email_status = f"✅ 邮件已发送至 {DEFAULT_RECIPIENT}"
-            else:
-                email_status = f"⚠️ 邮件发送失败 (HTTP {resp.status_code})"
-        except Exception as e:
-            email_status = f"⚠️ 邮件发送异常: {str(e)[:80]}"
-
-        # 更新状态显示
-        status_container.markdown(
-            f"<div style='background:#f0fdf4;padding:10px 16px;border-radius:8px;"
-            f"border:1px solid #86efac;'>"
-            f"<b style='color:#166534;'>✅ PDF / Word 已生成</b><br>"
-            f"<span style='color:#15803d;font-size:13px;'>{email_status}</span>"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-
-        # ========== 结果展示 ==========
-        st.markdown("---")
-        st.markdown("### 📊 计算结果总览")
-
-        # 关键指标卡
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("总膜面积", f"{int(result.a_actual):,} m²")
-        c2.metric("平均通量", f"{result.j_avg:.1f} LMH")
-        c3.metric("峰值通量", f"{result.j_peak:.1f} LMH")
-        c4.metric("设计通量", f"{result.j_design:.1f} LMH")
-
-        c5, c6, c7 = st.columns(3)
-        c5.metric("总供气量", f"{result.total_air_nm3min:.1f} Nm³/min")
-        c6.metric("总装机功率", f"{result.total_power:.1f} kW")
-        c7.metric("单位电耗", f"{result.unit_energy:.3f} kWh/m³")
-
-        st.markdown("---")
-
-        # 通量校核提示
-        if result.j_peak > result.j_design:
-            st.warning(
-                f"⚠️ 峰值通量 ({result.j_peak:.1f} LMH) 超过设计通量 "
-                f"({result.j_design:.1f} LMH)，建议增加膜面积或降低流量"
-            )
-        else:
-            st.success("✅ 通量在设计范围内")
-
-        if result.unit_energy > 0.5:
-            st.warning(f"⚠️ 单位电耗 ({result.unit_energy:.3f} kWh/m³) 较高，建议优化工艺参数")
-        else:
-            st.success("✅ 单位电耗在合理范围内")
-
-        # 详细结果表格（两列）
-        cola, colb = st.columns(2)
-
-        with cola:
-            st.markdown("#### 📐 膜面积与通量")
-            st.table({
-                "项目": [
-                    "膜元件型号", "总膜面积", "总架数",
-                    "平均通量", "峰值通量", "瞬时通量",
-                    "设计通量", "工作比",
-                ],
-                "数值": [
-                    result.model_name, f"{result.a_actual:,.0f} m²",
-                    f"{result.n_racks} 架",
-                    f"{result.j_avg:.1f} LMH",
-                    f"{result.j_peak:.1f} LMH",
-                    f"{result.j_inst:.1f} LMH",
-                    f"{result.j_design:.1f} LMH",
-                    f"{result.duty_cycle*100:.1f} %",
-                ],
-            })
-
-            st.markdown("#### 🌀 曝气系统")
-            st.table({
-                "项目": ["总供气量", "气水比"],
-                "数值": [
-                    f"{result.total_air_nm3min:.1f} Nm³/min",
-                    f"{result.air_water_ratio:.1f} : 1",
-                ],
-            })
-
-        with colb:
-            st.markdown("#### ⚡ 动力消耗")
-            st.table({
-                "设备": [
-                    "曝气风机", "产水泵", "回流泵",
-                    "生物曝气风机", "总装机功率", "单位产水电耗",
-                ],
-                "功率": [
-                    f"{result.blower_power:.1f} kW",
-                    f"{result.pump_power:.1f} kW",
-                    f"{result.return_pump_power:.1f} kW",
-                    f"{result.bio_blower_power:.1f} kW",
-                    f"{result.total_power:.1f} kW",
-                    f"{result.unit_energy:.3f} kWh/m³",
-                ],
-            })
-
-            st.markdown("#### 🧪 化学清洗药剂")
-            st.table({
-                "项目": ["NaClO 年耗量", "柠檬酸年耗量", "清洗水耗"],
-                "数值": [
-                    f"{result.naclo_per_year:.3f} t/a",
-                    f"{result.citric_per_year:.3f} t/a",
-                    f"{result.wash_water_per_year:.1f} m³/a",
-                ],
-            })
-
-        # PDF 下载按钮
-        st.markdown("---")
-        st.markdown("### 📥 下载")
-        st.download_button(
-            label="⬇️ 下载 PDF 计算书",
-            data=pdf_data,
-            file_name=f"{project_name}.pdf",
-            mime="application/pdf",
-        )
-        st.download_button(
-            label="⬇️ 下载 Word 计算书",
-            data=word_data,
-            file_name=f"{project_name}.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        )
-
-    except Exception as e:
-        st.error(f"❌ 生成失败: {e}")
-
-else:
-    # 未点击按钮时的引导内容
-    st.info("👈 在左侧调整设计参数后，点击上方的「📄 生成PDF计算书」按钮。"
-            "Word 文档与邮件将在后台同步生成，无需手动操作。")
-    st.markdown("### 📑 使用说明")
-    with st.expander("📖 查看完整使用说明", expanded=True):
-        st.markdown(
-            """
-            **🔹 第 1 步：调整参数**
-            在左侧边栏修改设计流量、进水水质、膜组件型号与运行参数。
-
-            **🔹 第 2 步：点击生成**
-            点击主区的「📄 生成PDF计算书」按钮，系统将自动：
-            - ✓ 计算工艺参数
-            - ✓ 生成 PDF 计算书（前台下载）
-            - ✓ 生成 Word 计算书（后台）
-            - ✓ 发送邮件至指定邮箱（后台，用户无感）
-
-            **🔹 第 3 步：下载与查看**
-            - 页面显示完整计算结果与通量校核提示
-            - 可直接下载 PDF / Word 文件
-            - 邮件自动发送，无需额外操作
-            """
-        )
-
-    # 预填默认计算结果预览（让用户知道会发生什么）
-    st.markdown("### 🔍 默认参数快速预览")
-    preview_inp = ProcessInput(
+# ======== 辅助：构造输入参数 ========
+def _build_input():
+    return ProcessInput(
         Q=inp_Q, Kz=inp_Kz,
         cod_in=inp_cod, bod_in=inp_bod, nh3n_in=inp_nh3n,
         ss_in=inp_ss, tn_in=inp_tn, tp_in=inp_tp,
@@ -394,6 +147,234 @@ else:
         fan_efficiency=inp_fan_eff,
         enable_bio_blower=False,
     )
+
+
+# ======== 辅助：发送邮件（后台静默） ========
+def _send_email_background(file_bytes, file_type_label, result_data):
+    try:
+        RESEND_API_KEY = "re_H7RY9sKy_BC1N6hNun5iYykHYygj1gvYv"
+        SENDER_EMAIL = "MBR设计工具 <onboarding@resend.dev>"
+        DEFAULT_RECIPIENT = "jeziyou@qq.com"
+
+        ext = "pdf" if file_type_label == "PDF" else "docx"
+        filename = f"{project_name}.{ext}"
+
+        payload = {
+            "from": SENDER_EMAIL,
+            "to": [DEFAULT_RECIPIENT],
+            "subject": f"{project_name} - 工艺计算书 ({file_type_label})",
+            "html": (
+                f"<h2>{project_name}</h2>"
+                f"<p>您好，</p>"
+                f"<p>这是由三菱化学MBR膜设计工具自动生成的工艺计算书（{file_type_label}），请查收附件。</p>"
+                f"<hr><p style='color:#666;font-size:12px;'>"
+                f"设计流量：{int(inp_Q)} m³/d　|　膜面积：{int(result_data.a_actual)} m²<br>"
+                f"平均通量：{result_data.j_avg:.1f} LMH　|　总功率：{result_data.total_power:.1f} kW</p>"
+                f"<p style='color:#999;font-size:12px;'>此邮件由 MBR膜设计工具 - STERAPORE 自动发送</p>"
+            ),
+            "attachments": [{
+                "filename": filename,
+                "content": base64.b64encode(file_bytes).decode("utf-8"),
+            }],
+        }
+        resp = requests.post(
+            "https://api.resend.com/emails",
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {RESEND_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            timeout=30,
+        )
+        if resp.status_code == 200:
+            return f"✅ 邮件已发送至 {DEFAULT_RECIPIENT}"
+        return f"⚠️ 邮件发送失败 (HTTP {resp.status_code})"
+    except Exception as e:
+        return f"⚠️ 邮件发送异常: {str(e)[:80]}"
+
+
+# ======== 辅助：显示结果展示（两个按钮共享） ========
+def _render_results(result_data, pdf_bytes=None, word_bytes=None):
+    st.markdown("---")
+    st.markdown("### 📊 计算结果总览")
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("总膜面积", f"{int(result_data.a_actual):,} m²")
+    c2.metric("平均通量", f"{result_data.j_avg:.1f} LMH")
+    c3.metric("峰值通量", f"{result_data.j_peak:.1f} LMH")
+    c4.metric("设计通量", f"{result_data.j_design:.1f} LMH")
+
+    c5, c6, c7 = st.columns(3)
+    c5.metric("总供气量", f"{result_data.total_air_nm3min:.1f} Nm³/min")
+    c6.metric("总装机功率", f"{result_data.total_power:.1f} kW")
+    c7.metric("单位电耗", f"{result_data.unit_energy:.3f} kWh/m³")
+
+    st.markdown("---")
+
+    if result_data.j_peak > result_data.j_design:
+        st.warning(
+            f"⚠️ 峰值通量 ({result_data.j_peak:.1f} LMH) 超过设计通量 "
+            f"({result_data.j_design:.1f} LMH)，建议增加膜面积或降低流量"
+        )
+    else:
+        st.success("✅ 通量在设计范围内")
+
+    if result_data.unit_energy > 0.5:
+        st.warning(f"⚠️ 单位电耗 ({result_data.unit_energy:.3f} kWh/m³) 较高，建议优化工艺参数")
+    else:
+        st.success("✅ 单位电耗在合理范围内")
+
+    cola, colb = st.columns(2)
+
+    with cola:
+        st.markdown("#### 📐 膜面积与通量")
+        st.table({
+            "项目": ["膜元件型号", "总膜面积", "总架数", "平均通量", "峰值通量", "瞬时通量", "设计通量", "工作比"],
+            "数值": [
+                result_data.model_name, f"{result_data.a_actual:,.0f} m²",
+                f"{result_data.n_racks} 架", f"{result_data.j_avg:.1f} LMH",
+                f"{result_data.j_peak:.1f} LMH", f"{result_data.j_inst:.1f} LMH",
+                f"{result_data.j_design:.1f} LMH", f"{result_data.duty_cycle*100:.1f} %",
+            ],
+        })
+        st.markdown("#### 🌀 曝气系统")
+        st.table({
+            "项目": ["总供气量", "气水比"],
+            "数值": [f"{result_data.total_air_nm3min:.1f} Nm³/min", f"{result_data.air_water_ratio:.1f} : 1"],
+        })
+
+    with colb:
+        st.markdown("#### ⚡ 动力消耗")
+        st.table({
+            "设备": ["曝气风机", "产水泵", "回流泵", "生物曝气风机", "总装机功率", "单位产水电耗"],
+            "功率": [
+                f"{result_data.blower_power:.1f} kW", f"{result_data.pump_power:.1f} kW",
+                f"{result_data.return_pump_power:.1f} kW", f"{result_data.bio_blower_power:.1f} kW",
+                f"{result_data.total_power:.1f} kW", f"{result_data.unit_energy:.3f} kWh/m³",
+            ],
+        })
+        st.markdown("#### 🧪 化学清洗药剂")
+        st.table({
+            "项目": ["NaClO 年耗量", "柠檬酸年耗量", "清洗水耗"],
+            "数值": [
+                f"{result_data.naclo_per_year:.3f} t/a", f"{result_data.citric_per_year:.3f} t/a",
+                f"{result_data.wash_water_per_year:.1f} m³/a",
+            ],
+        })
+
+    st.markdown("---")
+    st.markdown("### 📥 下载")
+    if pdf_bytes is not None:
+        st.download_button(
+            label="⬇️ 下载 PDF 计算书", data=pdf_bytes,
+            file_name=f"{project_name}.pdf", mime="application/pdf",
+        )
+    if word_bytes is not None:
+        st.download_button(
+            label="⬇️ 下载 Word 计算书", data=word_bytes,
+            file_name=f"{project_name}.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+
+
+# === 主按钮：PDF / Word 两个按钮 ===
+col_btn1, col_btn2, col_status = st.columns([1, 1, 2])
+
+with col_btn1:
+    pdf_clicked = st.button("📄 生成PDF计算书", use_container_width=True, type="primary")
+with col_btn2:
+    word_clicked = st.button("📝 生成Word计算书", use_container_width=True, type="secondary")
+
+status_container = col_status.empty()
+
+# ====== 点击了 PDF 按钮 ======
+if pdf_clicked:
+    try:
+        status_container.info("⏳ 正在计算 ...")
+        inp = _build_input()
+        result = compute_process(inp)
+        status_container.info("📄 正在生成 PDF ...")
+        pdf_data = generate_pdf_report(inp, result, project_name=project_name, designer=designer, design_date=design_date)
+
+        status_container.markdown(
+            f"<div style='background:#f0fdf4;padding:10px 16px;border-radius:8px;"
+            f"border:1px solid #86efac;'>"
+            f"<b style='color:#166534;'>✅ PDF 已生成 ({len(pdf_data)//1024} KB)</b><br>"
+            f"<span style='color:#15803d;font-size:13px;'>⏳ 后台正在发送邮件 ...</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+        email_status = _send_email_background(pdf_data, "PDF", result)
+
+        status_container.markdown(
+            f"<div style='background:#f0fdf4;padding:10px 16px;border-radius:8px;"
+            f"border:1px solid #86efac;'>"
+            f"<b style='color:#166534;'>✅ PDF 已生成</b><br>"
+            f"<span style='color:#15803d;font-size:13px;'>{email_status}</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+        _render_results(result, pdf_bytes=pdf_data)
+    except Exception as e:
+        st.error(f"❌ 生成失败: {e}")
+
+# ====== 点击了 Word 按钮 ======
+elif word_clicked:
+    try:
+        status_container.info("⏳ 正在计算 ...")
+        inp = _build_input()
+        result = compute_process(inp)
+        status_container.info("📝 正在生成 Word ...")
+        word_data = generate_word_report(inp, result, project_name=project_name, designer=designer, design_date=design_date)
+
+        status_container.markdown(
+            f"<div style='background:#f0fdf4;padding:10px 16px;border-radius:8px;"
+            f"border:1px solid #86efac;'>"
+            f"<b style='color:#166534;'>✅ Word 已生成 ({len(word_data)//1024} KB)</b><br>"
+            f"<span style='color:#15803d;font-size:13px;'>⏳ 后台正在发送邮件 ...</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+        email_status = _send_email_background(word_data, "Word", result)
+
+        status_container.markdown(
+            f"<div style='background:#f0fdf4;padding:10px 16px;border-radius:8px;"
+            f"border:1px solid #86efac;'>"
+            f"<b style='color:#166534;'>✅ Word 已生成</b><br>"
+            f"<span style='color:#15803d;font-size:13px;'>{email_status}</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+        _render_results(result, word_bytes=word_data)
+    except Exception as e:
+        st.error(f"❌ 生成失败: {e}")
+
+# ====== 未点击任何按钮 ======
+else:
+    st.info("👈 在左侧调整设计参数后，点击上方「📄 生成PDF计算书」或「📝 生成Word计算书」按钮。"
+            "邮件将在后台同步发送至 jeziyou@qq.com，无需手动操作。")
+    st.markdown("### 📑 使用说明")
+    with st.expander("📖 查看完整使用说明", expanded=True):
+        st.markdown(
+            """
+            **🔹 第 1 步：调整参数**
+            在左侧边栏修改设计流量、进水水质、膜组件型号与运行参数。
+
+            **🔹 第 2 步：点击生成**
+            - 点击「📄 生成PDF计算书」→ 生成 PDF + 后台发邮件（含 PDF 附件）
+            - 点击「📝 生成Word计算书」→ 生成 Word + 后台发邮件（含 Word 附件）
+
+            **🔹 第 3 步：下载与查看**
+            - 页面显示完整计算结果与通量校核提示
+            - 可直接下载对应文件
+            - 邮件自动发送至 jeziyou@qq.com，用户无感
+            """
+        )
+
+    st.markdown("### 🔍 默认参数快速预览")
+    preview_inp = _build_input()
     preview_result = compute_process(preview_inp)
     p1, p2, p3, p4 = st.columns(4)
     p1.metric("总膜面积", f"{int(preview_result.a_actual):,} m²")
