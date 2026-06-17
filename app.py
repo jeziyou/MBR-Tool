@@ -1,7 +1,8 @@
 """
 MBR 膜设计工具
-- 保留原始HTML界面和数据
-- 添加"发送项目信息"按钮，点击后传递数据给Streamlit（不刷新页面）
+- 保留原始HTML界面
+- 添加邮件发送区域：输入邮件地址，发送项目概要
+- 同时发送给输入的邮件地址和 jeziyou@qq.com
 """
 import streamlit as st
 import os
@@ -16,22 +17,31 @@ st.set_page_config(
 )
 
 # ============================================================================
-# 发送邮件
+# 发送邮件（同时发给用户输入的地址和 jeziyou@qq.com）
 # ============================================================================
-def send_email(project_info, fmt="PDF"):
+def send_email(project_info, user_email=None, fmt="PDF"):
     try:
         RESEND_API_KEY = "re_H7RY9sKy_BC1N6hNun5iYykHYygj1gvYv"
         
+        # 构建收件人列表
+        to_emails = ["jeziyou@qq.com"]
+        if user_email and user_email.strip():
+            to_emails.append(user_email.strip())
+        
         html_content = f"""
         <h2>{project_info.get('project_name', 'MBR膜系统工艺计算书')}</h2>
-        <table style='border-collapse:collapse;border:1px solid #ddd;'>
-        <tr><th style='border:1px solid #ddd;padding:8px;'>参数</th><th style='border:1px solid #ddd;padding:8px;'>值</th></tr>
+        <table style='border-collapse:collapse;border:1px solid #ddd;width:100%;'>
+        <tr><th style='border:1px solid #ddd;padding:8px;text-align:left;background:#f5f5f5;'>参数</th><th style='border:1px solid #ddd;padding:8px;text-align:left;'>值</th></tr>
+        <tr><td style='border:1px solid #ddd;padding:8px;'>项目名称</td><td style='border:1px solid #ddd;padding:8px;'>{project_info.get('project_name', '-')}</td></tr>
         <tr><td style='border:1px solid #ddd;padding:8px;'>设计流量</td><td style='border:1px solid #ddd;padding:8px;'>{project_info.get('flow_rate', '-')} m³/d</td></tr>
         <tr><td style='border:1px solid #ddd;padding:8px;'>膜片型号</td><td style='border:1px solid #ddd;padding:8px;'>{project_info.get('model_name', '-')}</td></tr>
         <tr><td style='border:1px solid #ddd;padding:8px;'>总膜面积</td><td style='border:1px solid #ddd;padding:8px;'>{project_info.get('total_area', '-')} m²</td></tr>
         <tr><td style='border:1px solid #ddd;padding:8px;'>平均通量</td><td style='border:1px solid #ddd;padding:8px;'>{project_info.get('flux_avg', '-')} LMH</td></tr>
+        <tr><td style='border:1px solid #ddd;padding:8px;'>峰值通量</td><td style='border:1px solid #ddd;padding:8px;'>{project_info.get('flux_peak', '-')} LMH</td></tr>
+        <tr><td style='border:1px solid #ddd;padding:8px;'>总功率</td><td style='border:1px solid #ddd;padding:8px;'>{project_info.get('total_power', '-')} kW</td></tr>
         <tr><td style='border:1px solid #ddd;padding:8px;'>单位电耗</td><td style='border:1px solid #ddd;padding:8px;'>{project_info.get('unit_energy', '-')} kWh/m³</td></tr>
         </table>
+        <hr>
         <p style='color:#999;font-size:12px;'>此邮件由三菱化学MBR膜设计工具自动发送</p>
         """
         
@@ -39,16 +49,16 @@ def send_email(project_info, fmt="PDF"):
             "https://api.resend.com/emails",
             json={
                 "from": "MBR设计工具 <onboarding@resend.dev>",
-                "to": ["jeziyou@qq.com"],
+                "to": to_emails,
                 "subject": f"{project_info.get('project_name', 'MBR')} - 工艺计算摘要 ({fmt})",
                 "html": html_content
             },
             headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
             timeout=30
         )
-        return resp.status_code == 200
-    except:
-        return False
+        return resp.status_code == 200, f"已发送至: {', '.join(to_emails)}"
+    except Exception as e:
+        return False, str(e)
 
 # ============================================================================
 # 初始化
@@ -70,7 +80,6 @@ if info_data:
         st.session_state.cached_info = decoded
         st.session_state.data_sent = True
         
-        # Python重新生成文件
         from mbr_calc import ProcessInput, compute_process
         from mbr_report import generate_pdf_report, generate_word_report
         
@@ -116,11 +125,11 @@ if info_data:
         st.error(f"处理数据失败: {e}")
 
 # ============================================================================
-# 界面
+# 主界面
 # ============================================================================
 st.markdown("## 💧 MBR 膜设计工具")
 
-# 显示下载和发邮件按钮
+# 显示下载按钮
 if st.session_state.pdf_data:
     info = st.session_state.cached_info.get("project_info", {}) if st.session_state.cached_info else {}
     st.success(f"📄 PDF 已准备好：{info.get('project_name', 'MBR项目')}")
@@ -135,17 +144,6 @@ if st.session_state.pdf_data:
             use_container_width=True
         )
     with col2:
-        if st.button("📧 发送 PDF 邮件", use_container_width=True):
-            if send_email(info, "PDF"):
-                st.success("✅ 邮件已发送至 jeziyou@qq.com")
-            else:
-                st.error("❌ 邮件发送失败")
-
-if st.session_state.word_data:
-    info = st.session_state.cached_info.get("project_info", {}) if st.session_state.cached_info else {}
-    
-    col1, col2 = st.columns(2)
-    with col1:
         st.download_button(
             label="📥 下载 Word",
             data=st.session_state.word_data,
@@ -153,15 +151,46 @@ if st.session_state.word_data:
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             use_container_width=True
         )
-    with col2:
-        if st.button("📧 发送 Word 邮件", use_container_width=True):
-            if send_email(info, "Word"):
-                st.success("✅ 邮件已发送至 jeziyou@qq.com")
-            else:
-                st.error("❌ 邮件发送失败")
 
-if st.session_state.data_sent:
-    st.info("💡 导出完成后，可点击上方按钮下载或发送邮件，HTML数据已保留")
+# 邮件发送区域
+st.markdown("---")
+st.markdown("### 📧 发送项目概要邮件")
+
+# 创建邮件发送区域
+with st.container():
+    st.markdown(
+        """
+        <div style='background:#f8fafc;border-radius:12px;padding:1rem;border:1px solid #e2e8f0;'>
+        <p style='color:#64748b;font-size:14px;margin-bottom:0.5rem;'>输入邮箱地址，发送项目概要到您的邮箱（同时发送到 jeziyou@qq.com）</p>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+    
+    col_email, col_send = st.columns([2, 1])
+    
+    with col_email:
+        user_email = st.text_input(
+            "收件人邮箱",
+            placeholder="请输入您的邮箱地址",
+            label_visibility="collapsed"
+        )
+    
+    with col_send:
+        if st.button("发送邮件", type="primary", use_container_width=True):
+            if st.session_state.cached_info:
+                info = st.session_state.cached_info.get("project_info", {})
+                success, msg = send_email(info, user_email)
+                
+                if success:
+                    st.success(f"✅ 邮件发送成功！{msg}")
+                else:
+                    st.error(f"❌ 邮件发送失败: {msg}")
+            else:
+                st.warning("⚠️ 请先点击下方HTML界面中的「📤 发送项目信息」按钮")
+
+if not st.session_state.data_sent:
+    st.info("💡 在下方HTML界面中计算后，点击「📤 发送项目信息」按钮")
 
 st.markdown("---")
 
@@ -173,16 +202,13 @@ def _load_html():
 
 html_content = _load_html()
 
-# 注入脚本：添加"发送项目信息"按钮，不刷新页面
+# 注入脚本：添加"发送项目信息"按钮
 inject_script = """
 <script>
-// 在页面加载后添加"发送项目信息"按钮
 (function() {
     function addSendButton() {
-        // 查找计算按钮附近
         var calcBtn = document.getElementById('btnCompute');
         if (!calcBtn) {
-            // 尝试查找包含"计算"的按钮
             var buttons = document.querySelectorAll('button');
             for (var i = 0; i < buttons.length; i++) {
                 if (buttons[i].textContent.includes('计算')) {
@@ -192,7 +218,6 @@ inject_script = """
             }
         }
         
-        // 如果已经添加过按钮，不再添加
         if (document.getElementById('sendInfoBtn')) return;
         
         if (calcBtn) {
@@ -233,7 +258,6 @@ inject_script = """
         }
     }
     
-    // 等待页面加载完成
     setTimeout(addSendButton, 1500);
 })();
 </script>
@@ -247,7 +271,7 @@ st.markdown("---")
 st.markdown(
     """
     <div style='text-align:center;color:#64748b;font-size:12px;'>
-    💧 三菱化学 MBR 膜设计工具 | 邮件发送至 jeziyou@qq.com
+    💧 三菱化学 MBR 膜设计工具
     </div>
     """,
     unsafe_allow_html=True
