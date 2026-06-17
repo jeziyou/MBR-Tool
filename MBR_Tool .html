@@ -5597,6 +5597,67 @@ async function exportQuickRefDOCX() {
     }
 }
 
+// ====== AUTO-FILL FROM URL PARAMS ======
+(function() {
+    // components.html 在 iframe 中，需要从父窗口读取 URL 参数
+    var search = window.location.search;
+    try { search = window.parent.location.search; } catch(e) {}
+    var params = new URLSearchParams(search);
+    var autoCalc = params.get('autoCalc');
+    if (!autoCalc) return;
+
+    // 等待页面完全加载
+    function init() {
+        var projectName = params.get('projectName');
+        var flowRate = params.get('flowRate');
+        var membraneModel = params.get('membraneModel');
+        var membraneSheets = params.get('membraneSheets');
+        var membranePools = params.get('membranePools');
+        var membraneSeries = params.get('membraneSeries');
+
+        var changed = false;
+
+        if (projectName) {
+            var el = document.getElementById('projectName');
+            if (el) { el.value = decodeURIComponent(projectName); changed = true; }
+        }
+        if (flowRate) {
+            var el = document.getElementById('flowRate');
+            if (el) { el.value = flowRate; changed = true; }
+        }
+        if (membraneModel) {
+            var el = document.getElementById('membraneModel');
+            if (el) { el.value = membraneModel; el.dispatchEvent(new Event('change')); changed = true; }
+        }
+        if (membraneSheets) {
+            var el = document.getElementById('membraneSheets');
+            if (el) { el.value = membraneSheets; el.dispatchEvent(new Event('change')); changed = true; }
+        }
+        if (membranePools) {
+            var el = document.getElementById('membranePools');
+            if (el) { el.value = membranePools; changed = true; }
+        }
+        if (membraneSeries) {
+            var el = document.getElementById('membraneSeries');
+            if (el) { el.value = membraneSeries; changed = true; }
+        }
+
+        // 自动触发计算
+        if (changed) {
+            setTimeout(function() {
+                var btn = document.getElementById('btnCalculate');
+                if (btn) btn.click();
+            }, 500);
+        }
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
+
 </script>
 
 </body>
