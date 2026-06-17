@@ -118,28 +118,10 @@ if "flask_started" not in st.session_state:
     st.session_state.flask_started = True
 
 # ============================================================
-# 侧边栏配置
-# ============================================================
-with st.sidebar:
-    st.title("📧 邮件发送配置")
-    st.markdown("---")
-    st.success("✅ 邮件服务已就绪（后台运行）")
-    st.caption(f"默认收件人：{DEFAULT_RECEIVER}")
-    st.caption(f"发件人：{SENDER_EMAIL}")
-    st.markdown("---")
-    st.info(
-        "💡 **使用说明**\n\n"
-        "1. 在右侧页面输入参数，点击「计算」\n"
-        "2. 点击「导出计算书 PDF/Word」按钮\n"
-        "3. 邮件将在**后台自动发送**至默认邮箱\n"
-        "4. 无需手动操作，发送状态会显示在按钮下方"
-    )
-
-# ============================================================
 # 主页面：嵌入 HTML 计算工具
 # ============================================================
 html_path = os.path.join(os.path.dirname(__file__), "MBR_Tool .html")
 with open(html_path, "r", encoding="utf-8") as f:
     html_content = f.read()
 
-st.iframe(html_content, height=9000, scrolling=True)
+st.components.v1.html(html_content, height=9000, scrolling=True)
