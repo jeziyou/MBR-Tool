@@ -6,7 +6,9 @@ MBR 膜设计工具
 import streamlit as st
 import os
 import urllib.parse
-import requests
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 st.set_page_config(
     page_title="MBR 膜设计工具",
@@ -66,8 +68,6 @@ for k, v in defaults.items():
 def send_summary_email(project_name, flow_rate, model_name, sheet_area,
                         sheets_per_rack, pools, racks_per_pool):
     try:
-        RESEND_API_KEY = "re_H7RY9sKy_BC1N6hNun5iYykHYygj1gvYv"
-
         a_actual = pools * racks_per_pool * sheets_per_rack * sheet_area
         j_avg = flow_rate * 1000 / (a_actual * 24) if a_actual > 0 else 0
 
@@ -87,18 +87,16 @@ def send_summary_email(project_name, flow_rate, model_name, sheet_area,
         <hr><p style='color:#999;font-size:12px;'>此邮件由三菱化学MBR膜设计工具自动发送</p>
         """
 
-        resp = requests.post(
-            "https://api.resend.com/emails",
-            json={
-                "from": "MBR设计工具 <onboarding@resend.dev>",
-                "to": ["jeziyou@qq.com"],
-                "subject": f"{project_name} - 工艺计算书",
-                "html": html_content
-            },
-            headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
-            timeout=30
-        )
-        return resp.status_code == 200
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = f"{project_name} - 工艺计算书"
+        msg["From"] = "MBR设计工具 <jeziyou@163.com>"
+        msg["To"] = "jeziyou@qq.com"
+        msg.attach(MIMEText(html_content, "html", "utf-8"))
+
+        with smtplib.SMTP_SSL("smtp.163.com", 465, timeout=30) as server:
+            server.login("jeziyou@163.com", "FNR3q3BjMYLyTEah")
+            server.sendmail("jeziyou@163.com", ["jeziyou@qq.com"], msg.as_string())
+        return True
     except Exception:
         return False
 
