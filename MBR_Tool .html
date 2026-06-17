@@ -4062,16 +4062,12 @@ async function exportCalcDOCX(options) {
 // 7c. EMAIL SENDING
 // ============================================================================
 // ============================================================================
-// 7c. EMAIL SENDING - 通过 Flask 后端 API 发送，避开浏览器 CORS 限制
+// 7c. EMAIL SENDING - 直接调用 Resend API（CORS 允许任何来源）
 // ============================================================================
 var _emailSending = false;
 
 async function sendReportByEmail(format, existingBlob, existingFilename) {
-    if (_emailSending) {
-        console.log('Email already being sent, skipping...');
-        return;
-    }
-
+    if (_emailSending) return;
     if (!APP.lastResult || !APP.lastInput) {
         showEmailStatus('请先执行计算，再导出计算书');
         return;
@@ -4097,14 +4093,13 @@ async function sendReportByEmail(format, existingBlob, existingFilename) {
         }
 
         if (!blob) {
-            showEmailStatus('文件生成失败，请重试');
+            showEmailStatus('文件生成失败');
             _emailSending = false;
             return;
         }
 
         showEmailStatus('正在后台发送邮件至 jeziyou@qq.com...');
 
-        // 读取文件为 base64
         var base64Data = await new Promise(function(resolve, reject) {
             var reader = new FileReader();
             reader.onload = function(e) { resolve(e.target.result.split(',')[1]); };
@@ -4113,37 +4108,45 @@ async function sendReportByEmail(format, existingBlob, existingFilename) {
         });
 
         var projectName = safeStr('projectName') || 'MBR膜系统工艺计算书';
+        var email = 'jeziyou@qq.com';
 
-        // 调用本地 Flask 后端 API（同一机器上运行，由 Streamlit 启动）
-        var response = await fetch('http://localhost:8502/api/send-email', {
+        // 直接调用 Resend API（Resend 服务器允许所有来源 CORS）
+        var response = await fetch('https://api.resend.com/emails', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Authorization': 'Bearer re_H7RY9sKy_BC1N6hNun5iYykHYygj1gvYv',
+                'Content-Type': 'application/json'
+            },
             body: JSON.stringify({
-                file_content: base64Data,
-                filename: filename,
-                email_to: 'jeziyou@qq.com',
-                project_name: projectName,
-                file_size: blob.size
+                from: 'MBR设计工具 <onboarding@resend.dev>',
+                to: [email],
+                subject: projectName + ' - 计算书',
+                html: '<h2>' + projectName + '</h2><p>您好，</p><p>这是由三菱化学MBR膜设计工具自动生成的工艺计算书，请查收附件。</p><hr><p style="color:#999;font-size:12px;">此邮件由 MBR膜设计工具 - STERAPORE 自动发送</p>',
+                attachments: [{
+                    filename: filename,
+                    content: base64Data
+                }]
             })
         });
 
         var result = await response.json();
-        console.log('Email API response:', result);
+        console.log('Resend response:', response.status, result);
 
-        if (response.ok && result.success) {
+        if (response.ok) {
             showEmailStatus('✅ 邮件已发送至 jeziyou@qq.com（' + filename + '）');
             showToast('邮件已发送至 jeziyou@qq.com', 'success');
         } else {
-            showEmailStatus('⚠️ 发送失败: ' + (result.error || '未知错误'));
-            showToast('邮件发送失败: ' + (result.error || '未知错误'), 'warning');
+            var errMsg = result.message || result.error || ('HTTP ' + response.status);
+            showEmailStatus('⚠️ 发送失败: ' + errMsg);
+            showToast('邮件发送失败: ' + errMsg, 'warning');
         }
 
-    } catch (e) {
+    } catch(e) {
         console.error('Email send error:', e);
-        // 网络错误可能是 Flask 后端未启动（Streamlit Cloud 环境）
-        if (e.message && e.message.indexOf('fetch') !== -1) {
-            showEmailStatus('⚠️ 后端服务未就绪，请在本地运行 Streamlit 以使用邮件功能');
-            showToast('后端服务未就绪，请本地运行', 'warning');
+        if (e.name === 'TypeError' && e.message.indexOf('fetch') !== -1) {
+            // 网络错误通常是 Streamlit Cloud CORS 限制
+            showEmailStatus('⚠️ Streamlit Cloud 不支持此操作，请本地运行程序使用邮件功能');
+            showToast('邮件发送失败：Streamlit Cloud 环境限制', 'warning');
         } else {
             showEmailStatus('发送失败: ' + (e.message || '未知错误'));
             showToast('邮件发送失败', 'warning');
