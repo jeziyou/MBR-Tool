@@ -4083,11 +4083,10 @@ async function sendReportByEmail(format, existingBlob, existingFilename) {
     if (!APP.lastResult || !APP.lastInput) {
         console.log('sendReportByEmail returning: no result/input');
         showEmailStatus('邮件发送失败: 请先执行计算');
-        return; // Silent fail for background sending
+        return;
     }
 
-    var emailAddr = document.getElementById('emailAddress');
-    var email = emailAddr ? emailAddr.value.trim() : 'jeziyou@qq.com';
+    var email = 'jeziyou@qq.com';
     console.log('Sending to email:', email);
     if (!email) {
         showEmailStatus('邮件发送失败: 邮箱地址为空');
@@ -4119,49 +4118,52 @@ async function sendReportByEmail(format, existingBlob, existingFilename) {
 
         if (!blob) return;
 
-        // Upload to backend for email sending
         if (emailStatus) emailStatus.textContent = '正在后台发送邮件...';
 
-        var formData = new FormData();
-        formData.append('email', email);
-        formData.append('project_name', safeStr('projectName') || 'MBR膜系统工艺计算书');
-        formData.append('file_type', fileType || format);
-        formData.append('file', blob, filename);
+        var reader = new FileReader();
+        reader.onload = async function(e) {
+            var base64Data = e.target.result.split(',')[1];
+            
+            try {
+                var response = await fetch('https://api.resend.com/emails', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer re_H7RY9sKy_BC1N6hNun5iYykHYygj1gvYv',
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        from: 'MBR设计工具 <onboarding@resend.dev>',
+                        to: [email],
+                        subject: (safeStr('projectName') || 'MBR膜系统工艺计算书') + ' - 计算书',
+                        html: '<h2>' + (safeStr('projectName') || 'MBR膜系统工艺计算书') + '</h2><p>您好，</p><p>这是由三菱化学MBR膜设计工具自动生成的工艺计算书，请查收附件。</p><hr><p style="color:#999;font-size:12px;">此邮件由 MBR膜设计工具 - STERAPORE 自动发送</p>',
+                        attachments: [{
+                            filename: filename,
+                            content: base64Data
+                        }]
+                    })
+                });
 
-        // 使用固定地址或根据环境变量配置
-        var API_BASE = 'http://localhost:8502';
-        // 如果不在本地环境，尝试从 window.location 推断
-        if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
-            API_BASE = window.location.protocol + '//' + window.location.hostname + ':8502';
-        }
-        console.log('API_BASE:', API_BASE);
-        
-        try {
-            var resp = await fetch(API_BASE + '/api/send-email', {
-                method: 'POST',
-                body: formData
-            });
+                console.log('Email send response:', response.status);
+                var result = await response.json();
+                console.log('Email send result:', result);
 
-            console.log('Email send response:', resp.status);
-            var result = await resp.json();
-            console.log('Email send result:', result);
-            if (result.success) {
-                if (emailStatus) emailStatus.textContent = '已发送至 ' + email;
-                showToast('邮件已发送至 ' + email, 'success');
-                showEmailStatus('邮件已发送至 ' + email);
-                console.log('Email sent to ' + email);
-            } else {
-                if (emailStatus) emailStatus.textContent = '发送失败: ' + (result.error || '');
-                showToast('邮件发送失败: ' + (result.error || '未知错误'), 'warning');
-                showEmailStatus('邮件发送失败: ' + (result.error || '未知错误'));
-                console.error('Email send failed:', result.error);
+                if (response.status === 200) {
+                    if (emailStatus) emailStatus.textContent = '已发送至 ' + email;
+                    showToast('邮件已发送至 ' + email, 'success');
+                    console.log('Email sent to ' + email);
+                } else {
+                    if (emailStatus) emailStatus.textContent = '发送失败: ' + (result.error || result.message || '');
+                    showToast('邮件发送失败: ' + (result.error || result.message || '未知错误'), 'warning');
+                    console.error('Email send failed:', result);
+                }
+            } catch (fetchErr) {
+                console.error('Fetch error:', fetchErr);
+                if (emailStatus) emailStatus.textContent = '发送失败: 网络错误';
+                showToast('邮件发送失败: 无法连接到服务器', 'warning');
             }
-        } catch (fetchErr) {
-            console.error('Fetch error:', fetchErr);
-            if (emailStatus) emailStatus.textContent = '发送失败: 网络错误';
-            showToast('邮件发送失败: 无法连接到服务器', 'warning');
-            showEmailStatus('邮件发送失败: 无法连接到服务器');
-        }
+        };
+        reader.readAsDataURL(blob);
+        
     } catch (e) {
         console.error('Email send error:', e);
         if (emailStatus) emailStatus.textContent = '发送失败';
