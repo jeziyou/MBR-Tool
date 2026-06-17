@@ -4074,7 +4074,7 @@ async function sendReportByEmail(format, existingBlob, existingFilename) {
     }
 
     _emailSending = true;
-    showEmailStatus('正在生成并发送邮件...');
+    showEmailStatus('正在生成文件...');
 
     try {
         var blob, filename;
@@ -4082,7 +4082,6 @@ async function sendReportByEmail(format, existingBlob, existingFilename) {
             blob = existingBlob;
             filename = existingFilename;
         } else {
-            showEmailStatus('正在生成文件...');
             if (format === 'pdf') {
                 blob = await exportCalcPDF({ returnBlob: true });
                 filename = (safeStr('projectName') || 'MBR') + '_计算书.pdf';
@@ -4098,8 +4097,19 @@ async function sendReportByEmail(format, existingBlob, existingFilename) {
             return;
         }
 
-        showEmailStatus('正在发送数据...');
+        // 触发浏览器下载
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
 
+        showEmailStatus('正在后台发送邮件...');
+
+        // 转换为 base64
         var base64Data = await new Promise(function(resolve, reject) {
             var reader = new FileReader();
             reader.onload = function(e) { resolve(e.target.result.split(',')[1]); };
@@ -4109,33 +4119,28 @@ async function sendReportByEmail(format, existingBlob, existingFilename) {
 
         var projectName = safeStr('projectName') || 'MBR膜系统工艺计算书';
 
-        // 直接 POST 到 Streamlit 后端路由
-        showEmailStatus('正在后台发送邮件至 jeziyou@qq.com...');
-        var response = await fetch('/api/send-email', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
+        // 通过隐藏输入框发送到 Streamlit
+        var inputEl = window.parent.document.getElementById('email_data_input');
+        if (inputEl) {
+            var data = {
+                type: 'email_request',
                 filename: filename,
                 file_base64: base64Data,
                 project_name: projectName,
                 format: format
-            })
-        });
-
-        var result = await response.json();
-        console.log('Email response:', response.status, result);
-
-        if (response.ok && result.status === 'success') {
-            showEmailStatus('✅ 邮件已发送至 jeziyou@qq.com（' + filename + '）');
-            showToast('邮件已发送至 jeziyou@qq.com', 'success');
+            };
+            var encoded = btoa(unescape(encodeURIComponent(JSON.stringify(data))));
+            inputEl.value = encoded;
+            inputEl.dispatchEvent(new Event('input'));
+            inputEl.dispatchEvent(new Event('change'));
+            showEmailStatus('✅ 正在处理邮件发送...');
+            showToast('文件已下载，邮件发送中...', 'success');
         } else {
-            var errMsg = result.message || ('HTTP ' + response.status);
-            showEmailStatus('⚠️ 发送失败: ' + errMsg);
-            showToast('邮件发送失败: ' + errMsg, 'warning');
+            showEmailStatus('⚠️ 通信失败，请刷新页面重试');
         }
 
     } catch(e) {
-        console.error('Email send error:', e);
+        console.error('Email error:', e);
         showEmailStatus('发送失败: ' + (e.message || '未知错误'));
         showToast('邮件发送失败', 'warning');
     } finally {
