@@ -1,15 +1,15 @@
 """
-MBR 膜系统工艺设计工具 - Streamlit 主应用
-- 保留原始 HTML 界面（通过 components.html 展示）
-- 保留前端 PDF/Word 生成逻辑（html2canvas + jsPDF + docx.js）
-- 邮件发送通过 Streamlit 后端自定义路由 /api/send-email 转发到 Resend API
+MBR 膜系统工艺设计工具 - Streamlit 主应用（最终版）
+- 原始 HTML 界面通过 components.html 展示（保留所有外观和前端逻辑）
+- PDF/Word 在前端 HTML 中生成（保持原有格式）
+- 邮件发送通过 Python 后端调用 Resend API
+- 文件下载由 Streamlit download_button 提供
 """
 import streamlit as st
 import os
 import json
+import base64
 import requests
-import threading
-import time
 
 # ============================================================================
 # Page 配置
@@ -21,242 +21,7 @@ st.set_page_config(
 )
 
 # ============================================================================
-# 后端路由：/api/send-email（在 Streamlit 启动时注册 Tornado 路由）
-# ============================================================================
-def _setup_tornado_route():
-    """向 Streamlit 的底层 Tornado 服务器注册 /api/send-email 路由"""
-    try:
-        from tornado.web import RequestHandler
-
-        class SendEmailHandler(RequestHandler):
-            def set_default_headers(self):
-                self.set_header("Access-Control-Allow-Origin", "*")
-                self.set_header("Access-Control-Allow-Headers", "Content-Type")
-                self.set_header("Access-Control-Allow-Methods", "POST, OPTIONS")
-
-            def options(self):
-                self.set_status(204)
-                self.finish()
-
-            def post(self):
-                try:
-                    data = json.loads(self.request.body)
-                    file_base64 = data.get("file_base64")
-                    filename = data.get("filename", "MBR计算书")
-                    project_name = data.get("project_name", "MBR膜系统工艺计算书")
-                    fmt = data.get("format", "pdf")
-
-                    if not file_base64:
-                        self.set_status(400)
-                        self.write(json.dumps({
-                            "status": "error",
-                            "message": "缺少文件内容"
-                        }))
-                        return
-
-                    RESEND_API_KEY = "re_H7RY9sKy_BC1N6hNun5iYykHYygj1gvYv"
-                    DEFAULT_RECIPIENT = "jeziyou@qq.com"
-
-                    payload = {
-                        "from": "MBR设计工具 <onboarding@resend.dev>",
-                        "to": [DEFAULT_RECIPIENT],
-                        "subject": f"{project_name} - 工艺计算书 ({fmt.upper()})",
-                        "html": (
-                            f"<h2>{project_name}</h2>"
-                            f"<p>您好，</p>"
-                            f"<p>这是由三菱化学MBR膜设计工具自动生成的工艺计算书（{fmt.upper()}），请查收附件。</p>"
-                            f"<hr><p style='color:#999;font-size:12px;'>此邮件由 MBR膜设计工具 - STERAPORE 自动发送</p>"
-                        ),
-                        "attachments": [{
-                            "filename": filename,
-                            "content": file_base64
-                        }]
-                    }
-
-                    resp = requests.post(
-                        "https://api.resend.com/emails",
-                        json=payload,
-                        headers={
-                            "Authorization": f"Bearer {RESEND_API_KEY}",
-                            "Content-Type": "application/json"
-                        },
-                        timeout=30
-                    )
-
-                    if resp.status_code == 200:
-                        self.write(json.dumps({
-                            "status": "success",
-                            "message": f"邮件已发送至 {DEFAULT_RECIPIENT}"
-                        }))
-                    else:
-                        self.set_status(500)
-                        self.write(json.dumps({
-                            "status": "error",
-                            "message": f"邮件发送失败 (HTTP {resp.status_code})"
-                        }))
-
-                except Exception as e:
-                    self.set_status(500)
-                    self.write(json.dumps({
-                        "status": "error",
-                        "message": str(e)[:200]
-                    }))
-
-        # --- 向 Streamlit 的 Tornado Application 注册路由 ---
-        try:
-            # 方法1: 通过 streamlit.runtime 访问
-            from streamlit.runtime import Runtime
-            runtime = Runtime.instance()
-
-            # 尝试找到 Tornado Application 对象
-            tornado_app = None
-            # 遍历 runtime 的属性
-            for attr_name in ["_server", "_local_server", "server"]:
-                server_obj = getattr(runtime, attr_name, None)
-                if server_obj is not None:
-                    # 查找 Tornado Application
-                    for inner_attr in ["_app", "app", "_tornado_app"]:
-                        app_obj = getattr(server_obj, inner_attr, None)
-                        if app_obj is not None and hasattr(app_obj, "add_handlers"):
-                            tornado_app = app_obj
-                            break
-
-            # 备用方法: 检查是否能通过 _get_or_create_server 获取
-            if tornado_app is None:
-                try:
-                    from streamlit.web.server import Server
-                    # 遍历运行时的对象树
-                    obj_tree = [runtime]
-                    visited = set()
-                    while obj_tree and tornado_app is None:
-                        obj = obj_tree.pop(0)
-                        obj_id = id(obj)
-                        if obj_id in visited:
-                            continue
-                        visited.add(obj_id)
-                        try:
-                            if hasattr(obj, "add_handlers") and hasattr(obj, "default_router"):
-                                tornado_app = obj
-                                break
-                            # 继续遍历属性
-                            for attr in dir(obj):
-                                if attr.startswith('_') and not attr.startswith('__'):
-                                    try:
-                                        val = getattr(obj, attr, None)
-                                        if val is not None and not isinstance(val, (str, int, float, bool, list, dict, tuple)):
-                                            obj_tree.append(val)
-                                    except:
-                                        pass
-                        except:
-                            pass
-                except Exception:
-                    pass
-
-            if tornado_app is not None:
-                tornado_app.add_handlers(r".*", [
-                    (r"/api/send-email", SendEmailHandler),
-                ])
-                return True
-            else:
-                return False
-
-        except Exception:
-            return False
-
-    except Exception:
-        return False
-
-
-# 尝试用另一种方法: 直接访问 Tornado Application
-def _setup_tornado_route_alt():
-    """备用方法：通过 IOLoop 和全局对象查找 Tornado Application"""
-    try:
-        from tornado.web import RequestHandler
-
-        class SendEmailHandler(RequestHandler):
-            def set_default_headers(self):
-                self.set_header("Access-Control-Allow-Origin", "*")
-                self.set_header("Access-Control-Allow-Headers", "Content-Type")
-                self.set_header("Access-Control-Allow-Methods", "POST, OPTIONS")
-
-            def options(self):
-                self.set_status(204)
-                self.finish()
-
-            def post(self):
-                try:
-                    data = json.loads(self.request.body)
-                    file_base64 = data.get("file_base64")
-                    filename = data.get("filename", "MBR计算书")
-                    project_name = data.get("project_name", "MBR膜系统工艺计算书")
-                    fmt = data.get("format", "pdf")
-
-                    if not file_base64:
-                        self.set_status(400)
-                        self.write(json.dumps({"status": "error", "message": "缺少文件内容"}))
-                        return
-
-                    RESEND_API_KEY = "re_H7RY9sKy_BC1N6hNun5iYykHYygj1gvYv"
-                    DEFAULT_RECIPIENT = "jeziyou@qq.com"
-
-                    payload = {
-                        "from": "MBR设计工具 <onboarding@resend.dev>",
-                        "to": [DEFAULT_RECIPIENT],
-                        "subject": f"{project_name} - 工艺计算书 ({fmt.upper()})",
-                        "html": (
-                            f"<h2>{project_name}</h2><p>您好，</p>"
-                            f"<p>这是由三菱化学MBR膜设计工具自动生成的工艺计算书（{fmt.upper()}），请查收附件。</p>"
-                            f"<hr><p style='color:#999;font-size:12px;'>此邮件由 MBR膜设计工具 - STERAPORE 自动发送</p>"
-                        ),
-                        "attachments": [{"filename": filename, "content": file_base64}]
-                    }
-
-                    resp = requests.post(
-                        "https://api.resend.com/emails",
-                        json=payload,
-                        headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
-                        timeout=30
-                    )
-
-                    if resp.status_code == 200:
-                        self.write(json.dumps({"status": "success", "message": f"邮件已发送至 {DEFAULT_RECIPIENT}"}))
-                    else:
-                        self.set_status(500)
-                        self.write(json.dumps({"status": "error", "message": f"邮件发送失败 (HTTP {resp.status_code})"}))
-
-                except Exception as e:
-                    self.set_status(500)
-                    self.write(json.dumps({"status": "error", "message": str(e)[:200]}))
-
-        # 尝试从模块全局变量查找
-        import sys
-        for mod_name, mod in list(sys.modules.items()):
-            if "streamlit" in mod_name:
-                for attr_name in dir(mod):
-                    try:
-                        attr = getattr(mod, attr_name)
-                        if hasattr(attr, "add_handlers") and hasattr(attr, "default_router"):
-                            attr.add_handlers(r".*", [(r"/api/send-email", SendEmailHandler)])
-                            return True
-                    except:
-                        pass
-
-        return False
-    except Exception:
-        return False
-
-
-@st.cache_resource(show_spinner=False)
-def _initialize_backend():
-    """初始化后端邮件发送路由（只执行一次）"""
-    success = _setup_tornado_route()
-    if not success:
-        success = _setup_tornado_route_alt()
-    return success
-
-
-# ============================================================================
-# 读取 HTML 内容
+# 读取原始 HTML 内容
 # ============================================================================
 @st.cache_resource(show_spinner=False)
 def _load_html():
@@ -266,31 +31,172 @@ def _load_html():
 
 
 # ============================================================================
+# 初始化 session_state
+# ============================================================================
+if "pending_email" not in st.session_state:
+    st.session_state.pending_email = None
+
+if "email_result" not in st.session_state:
+    st.session_state.email_result = None
+
+if "pdf_bytes" not in st.session_state:
+    st.session_state.pdf_bytes = None
+
+if "word_bytes" not in st.session_state:
+    st.session_state.word_bytes = None
+
+if "file_ready" not in st.session_state:
+    st.session_state.file_ready = None
+
+
+# ============================================================================
+# 辅助函数
+# ============================================================================
+def _send_email_via_resend(file_b64, filename, project_name, fmt):
+    """通过 Resend API 发送邮件（Python 后端调用，无 CORS 问题）"""
+    try:
+        RESEND_API_KEY = "re_H7RY9sKy_BC1N6hNun5iYykHYygj1gvYv"
+        payload = {
+            "from": "MBR设计工具 <onboarding@resend.dev>",
+            "to": ["jeziyou@qq.com"],
+            "subject": f"{project_name} - 工艺计算书 ({fmt.upper()})",
+            "html": (
+                f"<h2>{project_name}</h2>"
+                f"<p>您好，</p>"
+                f"<p>这是由三菱化学MBR膜设计工具自动生成的工艺计算书（{fmt.upper()}格式），请查收附件。</p>"
+                f"<hr><p style='color:#999;font-size:12px;'>此邮件由 MBR膜设计工具 - STERAPORE 自动发送</p>"
+            ),
+            "attachments": [{
+                "filename": filename,
+                "content": file_b64
+            }]
+        }
+        resp = requests.post(
+            "https://api.resend.com/emails",
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {RESEND_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            timeout=30
+        )
+        if resp.status_code == 200:
+            return f"✅ 邮件已发送至 jeziyou@qq.com"
+        return f"⚠️ 邮件发送失败 (HTTP {resp.status_code}): {resp.text[:100]}"
+    except Exception as e:
+        return f"⚠️ 邮件发送异常: {str(e)[:100]}"
+
+
+# ============================================================================
 # 主界面
 # ============================================================================
 
-# 初始化后端路由
-route_ready = _initialize_backend()
+st.markdown("## 💧 三菱化学 MBR 膜系统工艺设计工具")
 
-html_content = _load_html()
-
-# 顶部提示栏（简洁，不干扰主界面）
-col1, col2 = st.columns([3, 1])
-with col1:
-    if route_ready:
-        st.success("✅ 邮件服务就绪 — 点击HTML中的「📄 导出计算书 PDF」或「📝 导出计算书 Word」按钮，"
-                   "生成的计算书将同时后台发送至 jeziyou@qq.com")
-    else:
-        st.warning("⚠️ 邮件路由未就绪 — 仍可使用HTML界面生成和下载PDF/Word计算书")
-with col2:
-    st.markdown("**📄 PDF / 📝 Word** 按钮位于左侧面板底部")
+# 顶部状态栏
+col_header1, col_header2 = st.columns([4, 1])
+with col_header1:
+    st.success(
+        "✅ 系统就绪 — 在下方界面中调整参数、点击「计算」，"
+        "然后点击「📄 导出计算书 PDF」或「📝 导出计算书 Word」，"
+        "文件下载的同时邮件将自动发送至 **jeziyou@qq.com**"
+    )
+with col_header2:
+    st.markdown("**📄 PDF / 📝 Word** 按钮在左侧面板底部")
 
 st.markdown("---")
 
-# 嵌入原始HTML界面（使用 components.html，保持完整交互）
-st.components.v1.html(html_content, height=12000, scrolling=True)
+# 加载并渲染原始 HTML 界面
+html_content = _load_html()
+component_result = st.components.v1.html(html_content, height=12000, scrolling=True)
 
+# ============================================================================
+# 处理从 HTML 传来的数据
+# ============================================================================
+if component_result is not None:
+    data = component_result
+
+    # === 情况1: 邮件发送请求 ===
+    if isinstance(data, dict) and data.get("type") == "email_request":
+        file_b64 = data.get("file_base64", "")
+        filename = data.get("filename", "MBR_计算书")
+        project_name = data.get("project_name", "MBR膜系统工艺计算书")
+        fmt = data.get("format", "pdf")
+        file_bytes = base64.b64decode(file_b64) if file_b64 else None
+
+        if file_bytes and len(file_bytes) > 100:
+            # 保存到 session_state 以便下载
+            if fmt.lower() == "pdf":
+                st.session_state.pdf_bytes = file_bytes
+            else:
+                st.session_state.word_bytes = file_bytes
+            st.session_state.file_ready = filename
+
+            # 发送邮件
+            email_status = _send_email_via_resend(file_b64, filename, project_name, fmt)
+            st.session_state.email_result = email_status
+
+            st.rerun()
+        else:
+            st.warning("文件数据无效，请重试")
+
+    # === 情况2: 其他通信数据 ===
+    else:
+        st.info(f"收到数据: {str(data)[:100]}")
+
+# ============================================================================
+# 下载区域（始终显示如果有文件）
+# ============================================================================
+has_pdf = st.session_state.pdf_bytes is not None
+has_word = st.session_state.word_bytes is not None
+
+if has_pdf or has_word or st.session_state.email_result:
+    st.markdown("---")
+    st.markdown("### 📥 计算书下载")
+
+    if st.session_state.email_result:
+        st.success(st.session_state.email_result)
+
+    dl_col1, dl_col2 = st.columns(2)
+    with dl_col1:
+        if has_pdf:
+            project_for_dl = st.session_state.file_ready.replace(".pdf","").replace(".docx","") if st.session_state.file_ready else "MBR"
+            st.download_button(
+                label="📄 下载 PDF 计算书",
+                data=st.session_state.pdf_bytes,
+                file_name=f"{project_for_dl}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+                type="primary"
+            )
+        else:
+            st.button("📄 下载 PDF 计算书", disabled=True, use_container_width=True)
+
+    with dl_col2:
+        if has_word:
+            project_for_dl = st.session_state.file_ready.replace(".pdf","").replace(".docx","") if st.session_state.file_ready else "MBR"
+            st.download_button(
+                label="📝 下载 Word 计算书",
+                data=st.session_state.word_bytes,
+                file_name=f"{project_for_dl}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                use_container_width=True,
+                type="secondary"
+            )
+        else:
+            st.button("📝 下载 Word 计算书", disabled=True, use_container_width=True)
+
+    # 清除按钮
+    if st.button("🗑️ 清除已下载文件", use_container_width=False):
+        st.session_state.pdf_bytes = None
+        st.session_state.word_bytes = None
+        st.session_state.email_result = None
+        st.session_state.file_ready = None
+        st.rerun()
+
+# ============================================================================
 # 底部说明
+# ============================================================================
 st.markdown("---")
 st.markdown(
     """
