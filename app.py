@@ -1,12 +1,13 @@
 """
 MBR 膜设计工具
-- 保留原始HTML界面
-- 侧边栏：参数预设 + 确认按钮 → 自动填充HTML并计算 + 发送邮件至 jeziyou@qq.com
+- 侧边栏参数与HTML实时同步（无需点击确认）
+- 点击「发送邮件」按钮发送项目概要至 jeziyou@qq.com
 """
 import streamlit as st
 import os
 import urllib.parse
 import requests
+import math
 
 st.set_page_config(
     page_title="MBR 膜设计工具",
@@ -38,15 +39,28 @@ MODEL_DISPLAY = {
 }
 
 # ============================================================================
+# 初始化 session_state
+# ============================================================================
+defaults = {
+    "project_name": "MBR膜系统工艺计算书",
+    "flow_rate": 5000,
+    "model_idx": 2,
+    "pools": 2,
+    "flux": 18.0,
+    "param_hash": "",
+}
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
+
+# ============================================================================
 # 发送邮件
 # ============================================================================
 def send_summary_email(project_name, flow_rate, model_name, sheet_area,
                         sheets_per_rack, pools, racks_per_pool, flux):
-    """发送项目概要邮件到 jeziyou@qq.com"""
     try:
         RESEND_API_KEY = "re_H7RY9sKy_BC1N6hNun5iYykHYygj1gvYv"
 
-        # 计算
         a_actual = pools * racks_per_pool * sheets_per_rack * sheet_area
         j_avg = flow_rate * 1000 / (a_actual * 24) if a_actual > 0 else 0
 
@@ -64,8 +78,7 @@ def send_summary_email(project_name, flow_rate, model_name, sheet_area,
         <tr><td style='border:1px solid #ddd;padding:8px;'>设计通量</td><td style='border:1px solid #ddd;padding:8px;'>{flux:.1f} LMH</td></tr>
         <tr><td style='border:1px solid #ddd;padding:8px;'>实际通量</td><td style='border:1px solid #ddd;padding:8px;'>{j_avg:.1f} LMH</td></tr>
         </table>
-        <hr>
-        <p style='color:#999;font-size:12px;'>此邮件由三菱化学MBR膜设计工具自动发送</p>
+        <hr><p style='color:#999;font-size:12px;'>此邮件由三菱化学MBR膜设计工具自动发送</p>
         """
 
         resp = requests.post(
@@ -88,72 +101,98 @@ def send_summary_email(project_name, flow_rate, model_name, sheet_area,
 # ============================================================================
 with st.sidebar:
     st.markdown("## ⚙️ 参数预设")
+    st.caption("修改参数后HTML自动同步")
     st.markdown("---")
 
-    project_name = st.text_input("项目名称", value="MBR膜系统工艺计算书")
+    project_name = st.text_input(
+        "项目名称",
+        value=st.session_state.project_name,
+        key="project_name"
+    )
 
-    flow_rate = st.number_input("设计水量 (m³/d)", value=5000, min_value=1, step=100)
+    flow_rate = st.number_input(
+        "设计水量 (m³/d)",
+        value=st.session_state.flow_rate,
+        min_value=1, step=100,
+        key="flow_rate"
+    )
 
     model_options = list(MODEL_DISPLAY.keys())
     model_idx = st.selectbox(
         "膜片型号",
         range(len(model_options)),
         format_func=lambda i: MODEL_DISPLAY[model_options[i]],
-        index=2  # default: 62E0040SA
+        index=st.session_state.model_idx,
+        key="model_idx"
     )
     selected_model = model_options[model_idx]
 
-    pools = st.number_input("膜池数", value=2, min_value=1, step=1)
+    pools = st.number_input(
+        "膜池数",
+        value=st.session_state.pools,
+        min_value=1, step=1,
+        key="pools"
+    )
 
-    flux = st.number_input("设计通量 (LMH)", value=18.0, min_value=5.0, max_value=40.0, step=0.5)
+    flux = st.number_input(
+        "设计通量 (LMH)",
+        value=st.session_state.flux,
+        min_value=5.0, max_value=40.0, step=0.5,
+        key="flux"
+    )
+
+    # 计算每台膜片数和每池台数
+    sheet_area = MODEL_SHEET_AREA[selected_model]
+    sheets_per_rack = 42
+    a_req = flow_rate * 1000 / (flux * 24) if flux > 0 else 0
+    racks_per_pool = max(1, round(a_req / (pools * sheets_per_rack * sheet_area))) if pools > 0 and sheet_area > 0 else 1
+
+    # 显示计算结果
+    st.markdown("---")
+    st.caption(f"自动计算：每台 {sheets_per_rack} 片，每池 {racks_per_pool} 台")
+    a_actual = pools * racks_per_pool * sheets_per_rack * sheet_area
+    actual_flux = flow_rate * 1000 / (a_actual * 24) if a_actual > 0 else 0
+    st.caption(f"总膜面积：{int(a_actual):,} m²，实际通量：{actual_flux:.1f} LMH")
 
     st.markdown("---")
 
-    if st.button("✅ 确认", type="primary", use_container_width=True):
-        # 1. 计算每台膜片数和每池台数
-        sheet_area = MODEL_SHEET_AREA[selected_model]
-        sheets_per_rack = 42  # 默认值
-
-        # a_req = Q * 1000 / (J * 24)
-        a_req = flow_rate * 1000 / (flux * 24)
-        # racks_per_pool = a_req / (pools * sheets_per_rack * sheet_area)
-        racks_per_pool = max(1, round(a_req / (pools * sheets_per_rack * sheet_area)))
-
-        # 2. 发送邮件
-        email_ok = send_summary_email(
+    # 发送邮件按钮
+    if st.button("📧 发送邮件", type="primary", use_container_width=True):
+        ok = send_summary_email(
             project_name, flow_rate, selected_model, sheet_area,
             sheets_per_rack, pools, racks_per_pool, flux
         )
-
-        if email_ok:
+        if ok:
             st.success("✅ 邮件已发送至 jeziyou@qq.com")
         else:
-            st.warning("⚠️ 邮件发送失败，但参数已设置")
-
-        # 3. 构建URL参数，跳转到HTML页面自动填充
-        params = {
-            "autoCalc": "1",
-            "projectName": project_name,
-            "flowRate": str(flow_rate),
-            "membraneModel": selected_model,
-            "membraneSheets": str(sheets_per_rack),
-            "membranePools": str(pools),
-            "membraneSeries": str(racks_per_pool),
-        }
-        query_string = urllib.parse.urlencode(params)
-        st.markdown(
-            f'<meta http-equiv="refresh" content="0;url=?{query_string}">',
-            unsafe_allow_html=True
-        )
-        st.stop()
+            st.error("❌ 邮件发送失败")
 
     st.markdown("---")
-    st.markdown("""
-    **📤 确认后自动：**
-    1. 发送邮件至 jeziyou@qq.com
-    2. 自动填充HTML参数
-    3. 自动触发计算
-    """)
+    st.caption("💡 参数修改后右侧HTML自动同步并计算")
+
+# ============================================================================
+# 实时同步：更新URL参数
+# ============================================================================
+param_hash = f"{project_name}|{flow_rate}|{selected_model}|{pools}|{flux}"
+
+if param_hash != st.session_state.param_hash:
+    st.session_state.param_hash = param_hash
+
+    params = {
+        "autoCalc": "1",
+        "projectName": project_name,
+        "flowRate": str(flow_rate),
+        "membraneModel": selected_model,
+        "membraneSheets": str(sheets_per_rack),
+        "membranePools": str(pools),
+        "membraneSeries": str(racks_per_pool),
+    }
+
+    # 使用 st.query_params 更新（会触发一次rerun，但下次hash相同不会重复）
+    try:
+        st.query_params.update(params)
+    except Exception:
+        pass
 
 # ============================================================================
 # 主界面
