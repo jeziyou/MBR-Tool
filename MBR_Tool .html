@@ -4097,62 +4097,22 @@ async function sendReportByEmail(format, existingBlob, existingFilename) {
             return;
         }
 
-        showEmailStatus('正在准备下载...');
-
-        // 转换为base64
-        var base64Data = await new Promise(function(resolve, reject) {
-            var reader = new FileReader();
-            reader.onload = function(e) { resolve(e.target.result.split(',')[1]); };
-            reader.onerror = reject;
-            reader.readAsDataURL(blob);
-        });
-
-        // 收集项目信息
-        var projectInfo = {
-            project_name: safeStr('projectName') || 'MBR膜系统工艺计算书',
-            flow_rate: APP.lastInput.Q || 0,
-            model_name: APP.lastResult.model_name || '-',
-            sheets: APP.lastInput.sheets_per_rack || 0,
-            pools: APP.lastInput.pools || 0,
-            racks_per_pool: APP.lastInput.racks_per_pool || 0,
-            total_area: Math.round(APP.lastResult.a_actual) || 0,
-            flux_avg: parseFloat((APP.lastResult.j_avg || 0).toFixed(1)),
-            flux_peak: parseFloat((APP.lastResult.j_peak || 0).toFixed(1)),
-            total_power: parseFloat((APP.lastResult.total_power || 0).toFixed(1)),
-            unit_energy: parseFloat((APP.lastResult.unit_energy || 0).toFixed(3))
-        };
-
-        // 构造数据并通过URL传递
-        var data = {
-            type: format,
-            filename: filename,
-            file_base64: base64Data,
-            project_info: projectInfo
-        };
-
-        var encoded = encodeURIComponent(JSON.stringify(data));
-        var url = new URL(window.location.href);
-        url.searchParams.set('f', encoded);
-        
-        // 先触发下载
-        var downloadUrl = URL.createObjectURL(blob);
+        // 触发下载
+        var url = URL.createObjectURL(blob);
         var a = document.createElement('a');
-        a.href = downloadUrl;
+        a.href = url;
         a.download = filename;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        URL.revokeObjectURL(downloadUrl);
-        
-        // 然后跳转传递数据
-        showEmailStatus('正在刷新页面...');
-        setTimeout(function() {
-            window.location.href = url.toString();
-        }, 500);
+        URL.revokeObjectURL(url);
+
+        showEmailStatus('文件已准备好（' + filename + '）');
 
     } catch(e) {
         console.error('Export error:', e);
         showEmailStatus('导出失败: ' + (e.message || '未知错误'));
+    } finally {
         _emailSending = false;
     }
 }

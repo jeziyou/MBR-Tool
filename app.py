@@ -1,12 +1,11 @@
 """
 MBR 膜设计工具
-- 保留原始HTML界面
-- HTML传递项目信息（很小）→ Python重新生成文件 → 显示下载和发送邮件按钮
+- 保留原始HTML界面和数据
+- 添加"发送项目信息"按钮，点击后传递数据给Streamlit（不刷新页面）
 """
 import streamlit as st
 import os
 import json
-import base64
 import requests
 from datetime import datetime
 
@@ -54,12 +53,12 @@ def send_email(project_info, fmt="PDF"):
 # ============================================================================
 # 初始化
 # ============================================================================
-for key in ["cached_info", "pdf_data", "word_data"]:
+for key in ["cached_info", "pdf_data", "word_data", "data_sent"]:
     if key not in st.session_state:
         st.session_state[key] = None
 
 # ============================================================================
-# 处理URL参数（只接收项目信息，很小）
+# 处理URL参数
 # ============================================================================
 query_params = st.query_params
 info_data = query_params.get("info", "")
@@ -69,35 +68,25 @@ if info_data:
         decoded = json.loads(unescape(decodeURIComponent(info_data)))
         
         st.session_state.cached_info = decoded
+        st.session_state.data_sent = True
         
         # Python重新生成文件
         from mbr_calc import ProcessInput, compute_process
         from mbr_report import generate_pdf_report, generate_word_report
         
-        # 重建输入对象
         inp_data = decoded.get("input", {})
         input_obj = ProcessInput(
-            Q=inp_data.get('Q', 5000),
-            Kz=inp_data.get('Kz', 1.3),
-            cod_in=inp_data.get('cod_in', 400),
-            bod_in=inp_data.get('bod_in', 200),
-            nh3n_in=inp_data.get('nh3n_in', 35),
-            ss_in=inp_data.get('ss_in', 150),
-            tn_in=inp_data.get('tn_in', 50),
-            tp_in=inp_data.get('tp_in', 5),
-            ph_value=inp_data.get('ph_value', 7.2),
-            T=inp_data.get('T', 20),
-            MLSS=inp_data.get('MLSS', 8000),
-            model_index=inp_data.get('model_index', 2),
+            Q=inp_data.get('Q', 5000), Kz=inp_data.get('Kz', 1.3),
+            cod_in=inp_data.get('cod_in', 400), bod_in=inp_data.get('bod_in', 200),
+            nh3n_in=inp_data.get('nh3n_in', 35), ss_in=inp_data.get('ss_in', 150),
+            tn_in=inp_data.get('tn_in', 50), tp_in=inp_data.get('tp_in', 5),
+            ph_value=inp_data.get('ph_value', 7.2), T=inp_data.get('T', 20),
+            MLSS=inp_data.get('MLSS', 8000), model_index=inp_data.get('model_index', 2),
             sheets_per_rack=inp_data.get('sheets_per_rack', 42),
-            pools=inp_data.get('pools', 2),
-            racks_per_pool=inp_data.get('racks_per_pool', 3),
-            J25=inp_data.get('J25', 18),
-            fouling_factor=inp_data.get('fouling_factor', 0.85),
-            SAD=inp_data.get('SAD', 150),
-            suction_on=inp_data.get('suction_on', 7),
-            suction_off=inp_data.get('suction_off', 1),
-            pool_level=inp_data.get('pool_level', 3.5),
+            pools=inp_data.get('pools', 2), racks_per_pool=inp_data.get('racks_per_pool', 3),
+            J25=inp_data.get('J25', 18), fouling_factor=inp_data.get('fouling_factor', 0.85),
+            SAD=inp_data.get('SAD', 150), suction_on=inp_data.get('suction_on', 7),
+            suction_off=inp_data.get('suction_off', 1), pool_level=inp_data.get('pool_level', 3.5),
             pipe_loss=inp_data.get('pipe_loss', 0.5),
             permeate_pump_head=inp_data.get('permeate_pump_head', 6.5),
             permeate_pump_eff=inp_data.get('permeate_pump_eff', 0.75),
@@ -109,23 +98,19 @@ if info_data:
         )
         
         result_obj = compute_process(input_obj)
-        
-        # 生成PDF和Word
         project_name = decoded.get("project_info", {}).get("project_name", "MBR计算书")
+        
         st.session_state.pdf_data = generate_pdf_report(
-            input_obj, result_obj,
-            project_name=project_name,
-            designer="工程师",
-            design_date=datetime.now().strftime("%Y-%m-%d")
+            input_obj, result_obj, project_name=project_name,
+            designer="工程师", design_date=datetime.now().strftime("%Y-%m-%d")
         )
         st.session_state.word_data = generate_word_report(
-            input_obj, result_obj,
-            project_name=project_name,
-            designer="工程师",
-            design_date=datetime.now().strftime("%Y-%m-%d")
+            input_obj, result_obj, project_name=project_name,
+            designer="工程师", design_date=datetime.now().strftime("%Y-%m-%d")
         )
         
         st.query_params.clear()
+        st.rerun()
         
     except Exception as e:
         st.error(f"处理数据失败: {e}")
@@ -135,7 +120,7 @@ if info_data:
 # ============================================================================
 st.markdown("## 💧 MBR 膜设计工具")
 
-# 有缓存数据时显示按钮
+# 显示下载和发邮件按钮
 if st.session_state.pdf_data:
     info = st.session_state.cached_info.get("project_info", {}) if st.session_state.cached_info else {}
     st.success(f"📄 PDF 已准备好：{info.get('project_name', 'MBR项目')}")
@@ -150,7 +135,7 @@ if st.session_state.pdf_data:
             use_container_width=True
         )
     with col2:
-        if st.button("📧 发送邮件", use_container_width=True):
+        if st.button("📧 发送 PDF 邮件", use_container_width=True):
             if send_email(info, "PDF"):
                 st.success("✅ 邮件已发送至 jeziyou@qq.com")
             else:
@@ -175,8 +160,8 @@ if st.session_state.word_data:
             else:
                 st.error("❌ 邮件发送失败")
 
-if not st.session_state.pdf_data and not st.session_state.word_data:
-    st.info("👇 在下方HTML界面中输入参数并计算，然后点击「导出计算书」")
+if st.session_state.data_sent:
+    st.info("💡 导出完成后，可点击上方按钮下载或发送邮件，HTML数据已保留")
 
 st.markdown("---")
 
@@ -188,42 +173,68 @@ def _load_html():
 
 html_content = _load_html()
 
-# 注入脚本：收集项目信息（不是文件）并传递
+# 注入脚本：添加"发送项目信息"按钮，不刷新页面
 inject_script = """
 <script>
+// 在页面加载后添加"发送项目信息"按钮
 (function() {
-    var _original = window.sendReportByEmail;
-    window.sendReportByEmail = async function(format, existingBlob, existingFilename) {
-        // 先执行原始导出
-        if (_original) {
-            await _original.call(this, format, existingBlob, existingFilename);
+    function addSendButton() {
+        // 查找计算按钮附近
+        var calcBtn = document.getElementById('btnCompute');
+        if (!calcBtn) {
+            // 尝试查找包含"计算"的按钮
+            var buttons = document.querySelectorAll('button');
+            for (var i = 0; i < buttons.length; i++) {
+                if (buttons[i].textContent.includes('计算')) {
+                    calcBtn = buttons[i];
+                    break;
+                }
+            }
         }
         
-        // 收集项目信息（很小，只有几百字符）
-        if (APP.lastResult && APP.lastInput) {
-            var info = {
-                project_info: {
-                    project_name: window.safeStr('projectName') || 'MBR膜系统工艺计算书',
-                    flow_rate: APP.lastInput.Q || 0,
-                    model_name: APP.lastResult.model_name || '-',
-                    sheets: APP.lastInput.sheets_per_rack || 0,
-                    pools: APP.lastInput.pools || 0,
-                    racks_per_pool: APP.lastInput.racks_per_pool || 0,
-                    total_area: Math.round(APP.lastResult.a_actual) || 0,
-                    flux_avg: parseFloat((APP.lastResult.j_avg || 0).toFixed(1)),
-                    flux_peak: parseFloat((APP.lastResult.j_peak || 0).toFixed(1)),
-                    total_power: parseFloat((APP.lastResult.total_power || 0).toFixed(1)),
-                    unit_energy: parseFloat((APP.lastResult.unit_energy || 0).toFixed(3))
-                },
-                input: APP.lastInput
+        // 如果已经添加过按钮，不再添加
+        if (document.getElementById('sendInfoBtn')) return;
+        
+        if (calcBtn) {
+            var btn = document.createElement('button');
+            btn.id = 'sendInfoBtn';
+            btn.textContent = '📤 发送项目信息';
+            btn.style.cssText = 'margin-left:10px;padding:10px 20px;background:#10b981;color:white;border:none;border-radius:6px;cursor:pointer;font-size:14px;font-weight:bold;';
+            btn.onclick = function() {
+                if (!APP.lastResult || !APP.lastInput) {
+                    alert('请先点击「计算」按钮完成计算');
+                    return;
+                }
+                
+                var info = {
+                    project_info: {
+                        project_name: window.safeStr('projectName') || 'MBR膜系统工艺计算书',
+                        flow_rate: APP.lastInput.Q || 0,
+                        model_name: APP.lastResult.model_name || '-',
+                        sheets: APP.lastInput.sheets_per_rack || 0,
+                        pools: APP.lastInput.pools || 0,
+                        racks_per_pool: APP.lastInput.racks_per_pool || 0,
+                        total_area: Math.round(APP.lastResult.a_actual) || 0,
+                        flux_avg: parseFloat((APP.lastResult.j_avg || 0).toFixed(1)),
+                        flux_peak: parseFloat((APP.lastResult.j_peak || 0).toFixed(1)),
+                        total_power: parseFloat((APP.lastResult.total_power || 0).toFixed(1)),
+                        unit_energy: parseFloat((APP.lastResult.unit_energy || 0).toFixed(3))
+                    },
+                    input: APP.lastInput
+                };
+                
+                var encoded = encodeURIComponent(JSON.stringify(info));
+                var url = new URL(window.location.href);
+                url.searchParams.set('info', encoded);
+                window.location.href = url.toString();
             };
             
-            var encoded = encodeURIComponent(JSON.stringify(info));
-            var url = new URL(window.location.href);
-            url.searchParams.set('info', encoded);
-            window.location.href = url.toString();
+            calcBtn.parentNode.insertBefore(btn, calcBtn.nextSibling);
         }
-    };
+    }
+    
+    // 等待页面加载完成
+    setTimeout(addSendButton, 1500);
 })();
 </script>
 """
