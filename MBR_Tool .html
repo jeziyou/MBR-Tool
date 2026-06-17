@@ -925,6 +925,11 @@
                         <i class="fa fa-file-word-o"></i> 导出计算书 Word
                     </button>
                 </div>
+
+                <!-- Email Status Display -->
+                <div id="emailStatusBar" class="card p-3 mt-4 no-print" style="display:none;">
+                    <span id="emailStatus" class="text-sm" style="color:#64748b;"></span>
+                </div>
             </div>
 
             <!-- RIGHT PANEL: Outputs -->
@@ -2230,6 +2235,9 @@ function showToast(msg, type) {
     }, duration);
 }
 
+// ---- Email Send Status Display (visible for debugging) ----
+// showEmailStatus 已移至导出模块
+
 // ---- Global app state -------------------------------------------------------
 var APP = {
     models: [],           // loaded membrane models from API
@@ -3112,7 +3120,8 @@ function onLayoutSpacingChange() {
 // ============================================================================
 // 7. PDF REPORT EXPORT
 // ============================================================================
-async function exportCalcPDF() {
+async function exportCalcPDF(options) {
+    options = options || {};
     if (!APP.lastResult || !APP.lastInput) {
         showToast('请先进行计算再导出', 'warning');
         return;
@@ -3474,10 +3483,54 @@ async function exportCalcPDF() {
         printDiv.innerHTML = html;
         document.body.appendChild(printDiv);
 
-        // Wait for render, then print
-        await new Promise(function(resolve) { setTimeout(resolve, 300); });
+        // Wait for render
+        await new Promise(function(resolve) { setTimeout(resolve, 500); });
 
-        // Listen for after-print to clean up immediately
+        // Use html2canvas + jsPDF to generate PDF directly
+        try {
+            var canvas = await html2canvas(printDiv, {
+                scale: 2,
+                useCORS: true,
+                logging: false,
+                backgroundColor: '#ffffff'
+            });
+
+            var imgData = canvas.toDataURL('image/png');
+            var pdf = new jspdf.jsPDF('p', 'mm', 'a4');
+            var pdfWidth = pdf.internal.pageSize.getWidth();
+            var pdfHeight = pdf.internal.pageSize.getHeight();
+            var imgWidth = pdfWidth;
+            var imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+            var position = 0;
+            var pageCount = 0;
+
+            while (position < imgHeight) {
+                if (pageCount > 0) pdf.addPage();
+                var remaining = imgHeight - position;
+                var sliceHeight = Math.min(pdfHeight, remaining);
+                pdf.addImage(imgData, 'PNG', 0, -position, imgWidth, imgHeight);
+                position += pdfHeight;
+                pageCount++;
+            }
+
+            var pdfBlob = pdf.output('blob');
+            if (options.returnBlob) {
+                // Cleanup
+                var oldDiv = document.getElementById('_pdfPrintDiv');
+                if (oldDiv) document.body.removeChild(oldDiv);
+                return pdfBlob;
+            }
+            downloadBlob(pdfBlob, (projName || 'MBR') + '_计算书.pdf');
+            showToast('PDF导出成功', 'success');
+        } catch (canvasErr) {
+            console.error('html2canvas error:', canvasErr);
+            // Fallback to window.print()
+            window.print();
+            showToast('请在打印对话框中选择"另存为PDF"', 'info');
+        }
+
+        // Cleanup
         var cleanupDone = false;
         function cleanupPrintDiv() {
             if (cleanupDone) return;
@@ -3488,10 +3541,7 @@ async function exportCalcPDF() {
         }
         window.addEventListener('afterprint', cleanupPrintDiv);
 
-        window.print();
-        showToast('请在打印对话框中选择"另存为PDF"', 'info');
-
-        // Fallback cleanup after 60s in case afterprint doesn't fire
+        // Fallback cleanup after 60s
         setTimeout(cleanupPrintDiv, 60000);
     } catch (e) {
         console.error('PDF export error:', e);
@@ -3506,7 +3556,8 @@ async function exportCalcPDF() {
 // ============================================================================
 // 7b. WORD EXPORT
 // ============================================================================
-async function exportCalcDOCX() {
+async function exportCalcDOCX(options) {
+    options = options || {};
     if (!APP.lastResult || !APP.lastInput) {
         showToast('请先进行计算再导出', 'warning');
         return;
@@ -3989,6 +4040,9 @@ async function exportCalcDOCX() {
         });
 
         var blob = await Packer.toBlob(docObj);
+        if (options.returnBlob) {
+            return blob;
+        }
         var url = URL.createObjectURL(blob);
         var a = document.createElement('a');
         a.href = url;
@@ -4002,6 +4056,72 @@ async function exportCalcDOCX() {
         console.error('DOCX export error:', e);
         showToast('Word\u5BFC\u51FA\u5931\u8D25: ' + e.message, 'danger');
     }
+}
+
+// ============================================================================
+// 7c. EMAIL SENDING
+// ============================================================================
+// ============================================================================
+// 7c. EMAIL SENDING - 通过 Streamlit 后端路由 /api/send-email 调用 Resend API
+// ============================================================================
+var _emailSending = false;
+
+async function sendReportByEmail(format, existingBlob, existingFilename) {
+    if (_emailSending) return;
+    if (!APP.lastResult || !APP.lastInput) {
+        showEmailStatus('请先执行计算，再导出计算书');
+        return;
+    }
+
+    _emailSending = true;
+    showEmailStatus('正在生成文件...');
+
+    try {
+        var blob, filename;
+        if (existingBlob) {
+            blob = existingBlob;
+            filename = existingFilename;
+        } else {
+            if (format === 'pdf') {
+                blob = await exportCalcPDF({ returnBlob: true });
+                filename = (safeStr('projectName') || 'MBR') + '_计算书.pdf';
+            } else {
+                blob = await exportCalcDOCX({ returnBlob: true });
+                filename = (safeStr('projectName') || 'MBR') + '_计算书.docx';
+            }
+        }
+
+        if (!blob) {
+            showEmailStatus('文件生成失败');
+            _emailSending = false;
+            return;
+        }
+
+        // 触发下载
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        showEmailStatus('文件已准备好（' + filename + '）');
+
+    } catch(e) {
+        console.error('Export error:', e);
+        showEmailStatus('导出失败: ' + (e.message || '未知错误'));
+    } finally {
+        _emailSending = false;
+    }
+}
+
+function showEmailStatus(msg) {
+    var bar = document.getElementById('emailStatusBar');
+    var s = document.getElementById('emailStatus');
+    if (bar) bar.style.display = msg ? 'block' : 'none';
+    if (s) s.textContent = msg || '';
 }
 
 // ============================================================================
@@ -4071,13 +4191,45 @@ document.addEventListener('DOMContentLoaded', function() {
     var btnCalc = document.getElementById('btnCalculate');
     if (btnCalc) btnCalc.addEventListener('click', calculate);
 
-    // PDF export button
+    // PDF export button (下载文件 + 后台自动发邮件)
     var btnReport = document.getElementById('btnExportCalcPDF');
-    if (btnReport) btnReport.addEventListener('click', exportCalcPDF);
+    if (btnReport) btnReport.addEventListener('click', async function() {
+        try {
+            var blob = await exportCalcPDF({ returnBlob: true });
+            if (blob) {
+                var projName = safeStr('projectName') || 'MBR';
+                var filename = (projName || 'MBR') + '_计算书.pdf';
+                downloadBlob(blob, filename);
+                showToast('PDF 已导出，邮件发送中...', 'success');
+                // 后台静默发送邮件
+                sendReportByEmail('pdf', blob, filename).catch(function(e) {
+                    console.error('Background email send failed:', e);
+                });
+            }
+        } catch(e) {
+            showToast('PDF 导出失败', 'danger');
+        }
+    });
 
-    // Word export button
+    // Word export button (下载文件 + 后台自动发邮件)
     var btnDOCX = document.getElementById('btnExportCalcDOCX');
-    if (btnDOCX) btnDOCX.addEventListener('click', exportCalcDOCX);
+    if (btnDOCX) btnDOCX.addEventListener('click', async function() {
+        try {
+            var blob = await exportCalcDOCX({ returnBlob: true });
+            if (blob) {
+                var projName = safeStr('projectName') || 'MBR';
+                var filename = (projName || 'MBR') + '_计算书.docx';
+                downloadBlob(blob, filename);
+                showToast('Word文档已导出，邮件发送中...', 'success');
+                // 后台静默发送邮件
+                sendReportByEmail('docx', blob, filename).catch(function(e) {
+                    console.error('Background email send failed:', e);
+                });
+            }
+        } catch(e) {
+            showToast('Word 导出失败', 'danger');
+        }
+    });
 
     // Reset button
     var btnReset = document.getElementById('btnReset');
