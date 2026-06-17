@@ -108,16 +108,20 @@ def dict_to_process_input(d):
     )
 
 # ============================================================================
-# 处理 URL 中的计算结果
-# ============================================================================
-query_params = st.query_params
-calc_data = query_params.get("calc", "")
-
 # 初始化 session_state
+# ============================================================================
 if "project_info" not in st.session_state:
     st.session_state.project_info = None
 if "calc_input_dict" not in st.session_state:
     st.session_state.calc_input_dict = None
+if "calc_result_dict" not in st.session_state:
+    st.session_state.calc_result_dict = None
+
+# ============================================================================
+# 处理 URL 中的计算结果
+# ============================================================================
+query_params = st.query_params
+calc_data = query_params.get("calc", "")
 
 if calc_data:
     try:
@@ -126,38 +130,53 @@ if calc_data:
         
         st.session_state.project_info = data.get("project_info", {})
         st.session_state.calc_input_dict = data.get("input", {})
+        st.session_state.calc_result_dict = data.get("result", {})
         
         st.query_params.clear()
+        st.rerun()
         
     except Exception as e:
         st.error(f"数据解析失败: {e}")
 
 # ============================================================================
-# 导出按钮区域
+# 主界面
 # ============================================================================
-st.markdown("### 📄 导出计算书")
+st.markdown("## 💧 MBR 膜设计工具 - 导出计算书")
 
-has_result = st.session_state.calc_input_dict is not None
-
-if has_result:
-    st.success(f"✅ 已获取计算结果：{st.session_state.project_info.get('project_name', 'MBR项目')}")
+# 显示当前状态
+if st.session_state.project_info:
+    st.success(f"✅ 已加载计算结果：{st.session_state.project_info.get('project_name', 'MBR项目')}")
     
-    col1, col2, col3 = st.columns([1, 1, 2])
+    # 显示项目摘要
+    with st.expander("📊 查看项目摘要", expanded=True):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("设计流量", f"{st.session_state.project_info.get('flow_rate', 0)} m³/d")
+            st.metric("膜片型号", st.session_state.project_info.get('model_name', '-'))
+        with col2:
+            st.metric("总膜面积", f"{st.session_state.project_info.get('total_area', 0)} m²")
+            st.metric("膜池数量", f"{st.session_state.project_info.get('pools', 0)} 池")
+        with col3:
+            st.metric("平均通量", f"{st.session_state.project_info.get('flux_avg', 0)} LMH")
+            st.metric("单位电耗", f"{st.session_state.project_info.get('unit_energy', 0)} kWh/m³")
     
-    with col1:
-        pdf_btn = st.button("📄 导出 PDF 计算书", type="primary", use_container_width=True)
+    # 导出按钮
+    st.markdown("### 📄 导出文件")
+    col_btn1, col_btn2 = st.columns(2)
     
-    with col2:
-        word_btn = st.button("📝 导出 Word 计算书", type="secondary", use_container_width=True)
+    with col_btn1:
+        pdf_clicked = st.button("📄 导出 PDF 计算书", type="primary", use_container_width=True)
     
-    # PDF 导出
-    if pdf_btn:
+    with col_btn2:
+        word_clicked = st.button("📝 导出 Word 计算书", type="secondary", use_container_width=True)
+    
+    # PDF 导出逻辑
+    if pdf_clicked:
         with st.spinner("正在生成 PDF..."):
             try:
                 from mbr_calc import compute_process
                 from mbr_report import generate_pdf_report
                 
-                # 重建输入对象并重新计算
                 input_obj = dict_to_process_input(st.session_state.calc_input_dict)
                 result_obj = compute_process(input_obj)
                 
@@ -168,6 +187,7 @@ if has_result:
                     design_date=datetime.now().strftime("%Y-%m-%d")
                 )
                 
+                # 发送邮件
                 success, msg = send_email(
                     st.session_state.project_info,
                     pdf_bytes,
@@ -180,6 +200,7 @@ if has_result:
                 else:
                     st.warning(f"⚠️ 邮件发送失败: {msg}")
                 
+                # 下载按钮
                 st.download_button(
                     label="⬇️ 下载 PDF 文件",
                     data=pdf_bytes,
@@ -191,8 +212,8 @@ if has_result:
             except Exception as e:
                 st.error(f"PDF 生成失败: {e}")
     
-    # Word 导出
-    if word_btn:
+    # Word 导出逻辑
+    if word_clicked:
         with st.spinner("正在生成 Word..."):
             try:
                 from mbr_calc import compute_process
@@ -232,13 +253,14 @@ if has_result:
                 st.error(f"Word 生成失败: {e}")
 
 else:
-    st.info("👈 请在下方 HTML 界面中输入参数并点击「计算」，然后点击「📤 发送结果到导出区」按钮")
-
-st.markdown("---")
+    st.info("👇 请在下方 HTML 界面中输入参数并计算，完成后点击「发送结果」按钮")
 
 # ============================================================================
 # 读取并显示原始 HTML
 # ============================================================================
+st.markdown("---")
+st.markdown("### 🖥️ 参数输入与计算（原始HTML界面）")
+
 @st.cache_resource
 def _load_html():
     html_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "MBR_Tool .html")
@@ -247,64 +269,49 @@ def _load_html():
 
 html_content = _load_html()
 
-# 注入脚本：在 HTML 中添加「发送结果到导出区」按钮
-inject_script = """
+# 注入脚本：收集计算结果并发送到 Streamlit
+collect_script = """
 <script>
+// 修改 sendReportByEmail：收集结果后刷新页面
 (function() {
-    setTimeout(function() {
-        var calcBtn = document.getElementById('btnCompute');
-        if (!calcBtn) {
-            var buttons = document.querySelectorAll('button');
-            for (var i = 0; i < buttons.length; i++) {
-                if (buttons[i].textContent.includes('计算')) {
-                    calcBtn = buttons[i];
-                    break;
-                }
-            }
+    var _original = window.sendReportByEmail;
+    window.sendReportByEmail = async function(format, existingBlob, existingFilename) {
+        // 执行原始函数
+        if (_original) {
+            await _original.call(this, format, existingBlob, existingFilename);
         }
         
-        if (calcBtn && !document.getElementById('sendToExportBtn')) {
-            var sendBtn = document.createElement('button');
-            sendBtn.id = 'sendToExportBtn';
-            sendBtn.textContent = '📤 发送结果到导出区';
-            sendBtn.style.cssText = 'margin-left:10px;padding:10px 20px;background:#1e40af;color:white;border:none;border-radius:6px;cursor:pointer;font-size:14px;font-weight:bold;';
-            sendBtn.onclick = function() {
-                if (!APP.lastResult || !APP.lastInput) {
-                    alert('请先点击「计算」按钮完成计算');
-                    return;
-                }
-                
-                var data = {
-                    project_info: {
-                        project_name: safeStr('projectName') || 'MBR膜系统工艺计算书',
-                        flow_rate: APP.lastInput.Q || 0,
-                        model_name: APP.lastResult.model_name || '-',
-                        sheets: APP.lastInput.sheets_per_rack || 0,
-                        pools: APP.lastInput.pools || 0,
-                        racks_per_pool: APP.lastInput.racks_per_pool || 0,
-                        total_area: Math.round(APP.lastResult.a_actual) || 0,
-                        flux_avg: (APP.lastResult.j_avg || 0).toFixed(1),
-                        flux_peak: (APP.lastResult.j_peak || 0).toFixed(1),
-                        total_power: (APP.lastResult.total_power || 0).toFixed(1),
-                        unit_energy: (APP.lastResult.unit_energy || 0).toFixed(3)
-                    },
-                    input: APP.lastInput
-                };
-                
-                var encoded = encodeURIComponent(JSON.stringify(data));
-                var url = new URL(window.location.href);
-                url.searchParams.set('calc', encoded);
-                window.location.href = url.toString();
+        // 收集数据并刷新
+        if (APP.lastResult && APP.lastInput) {
+            var data = {
+                project_info: {
+                    project_name: safeStr('projectName') || 'MBR膜系统工艺计算书',
+                    flow_rate: APP.lastInput.Q || 0,
+                    model_name: APP.lastResult.model_name || '-',
+                    sheets: APP.lastInput.sheets_per_rack || 0,
+                    pools: APP.lastInput.pools || 0,
+                    racks_per_pool: APP.lastInput.racks_per_pool || 0,
+                    total_area: Math.round(APP.lastResult.a_actual) || 0,
+                    flux_avg: (APP.lastResult.j_avg || 0).toFixed(1),
+                    flux_peak: (APP.lastResult.j_peak || 0).toFixed(1),
+                    total_power: (APP.lastResult.total_power || 0).toFixed(1),
+                    unit_energy: (APP.lastResult.unit_energy || 0).toFixed(3)
+                },
+                input: APP.lastInput,
+                result: APP.lastResult
             };
             
-            calcBtn.parentNode.insertBefore(sendBtn, calcBtn.nextSibling);
+            var encoded = encodeURIComponent(JSON.stringify(data));
+            var url = new URL(window.location.href);
+            url.searchParams.set('calc', encoded);
+            window.location.href = url.toString();
         }
-    }, 1000);
+    };
 })();
 </script>
 """
 
-html_content += inject_script
+html_content += collect_script
 
 st.components.v1.html(html_content, height=12000, scrolling=True)
 
