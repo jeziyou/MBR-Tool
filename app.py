@@ -1,13 +1,12 @@
 """
-简化版：原始HTML界面 + Python直接发送邮件
+简化版：仅发送项目关键信息（无附件）
 - 保留原始HTML界面和交互
-- 导出时自动调用Python Resend API发送邮件
-- 使用页面刷新机制触发Python处理
+- 导出时发送项目摘要邮件（名称、水量、膜型号、面积等）
+- 文件下载由浏览器原生触发
 """
 import streamlit as st
 import os
 import json
-import base64
 import requests
 
 st.set_page_config(
@@ -17,35 +16,78 @@ st.set_page_config(
 )
 
 # ============================================================================
-# 邮件发送函数
+# 发送邮件（仅发送文本信息，无附件）
 # ============================================================================
-def send_email(file_b64, filename, project_name, fmt):
+def send_email(project_info):
     try:
         RESEND_API_KEY = "re_H7RY9sKy_BC1N6hNun5iYykHYygj1gvYv"
+        
+        # 邮件内容模板
+        html_content = f"""
+        <h2>{project_info.get('project_name', 'MBR膜系统工艺计算书')}</h2>
+        <table style='border-collapse:collapse;border:1px solid #ddd;width:100%;'>
+        <tr><th style='border:1px solid #ddd;padding:8px;text-align:left;background:#f5f5f5;'>参数</th><th style='border:1px solid #ddd;padding:8px;text-align:left;'>值</th></tr>
+        <tr><td style='border:1px solid #ddd;padding:8px;'>项目名称</td><td style='border:1px solid #ddd;padding:8px;'>{project_info.get('project_name', '-')}</td></tr>
+        <tr><td style='border:1px solid #ddd;padding:8px;'>设计流量</td><td style='border:1px solid #ddd;padding:8px;'>{project_info.get('flow_rate', '-')} m³/d</td></tr>
+        <tr><td style='border:1px solid #ddd;padding:8px;'>膜片型号</td><td style='border:1px solid #ddd;padding:8px;'>{project_info.get('model_name', '-')}</td></tr>
+        <tr><td style='border:1px solid #ddd;padding:8px;'>膜片数量</td><td style='border:1px solid #ddd;padding:8px;'>{project_info.get('sheets', '-')} 片</td></tr>
+        <tr><td style='border:1px solid #ddd;padding:8px;'>膜池数量</td><td style='border:1px solid #ddd;padding:8px;'>{project_info.get('pools', '-')} 池</td></tr>
+        <tr><td style='border:1px solid #ddd;padding:8px;'>每池台数</td><td style='border:1px solid #ddd;padding:8px;'>{project_info.get('racks_per_pool', '-')} 台</td></tr>
+        <tr><td style='border:1px solid #ddd;padding:8px;'>总膜面积</td><td style='border:1px solid #ddd;padding:8px;'>{project_info.get('total_area', '-')} m²</td></tr>
+        <tr><td style='border:1px solid #ddd;padding:8px;'>平均通量</td><td style='border:1px solid #ddd;padding:8px;'>{project_info.get('flux_avg', '-')} LMH</td></tr>
+        <tr><td style='border:1px solid #ddd;padding:8px;'>峰值通量</td><td style='border:1px solid #ddd;padding:8px;'>{project_info.get('flux_peak', '-')} LMH</td></tr>
+        <tr><td style='border:1px solid #ddd;padding:8px;'>总功率</td><td style='border:1px solid #ddd;padding:8px;'>{project_info.get('total_power', '-')} kW</td></tr>
+        <tr><td style='border:1px solid #ddd;padding:8px;'>单位电耗</td><td style='border:1px solid #ddd;padding:8px;'>{project_info.get('unit_energy', '-')} kWh/m³</td></tr>
+        </table>
+        <hr>
+        <p style='color:#999;font-size:12px;'>此邮件由三菱化学MBR膜设计工具自动发送</p>
+        """
+        
         payload = {
             "from": "MBR设计工具 <onboarding@resend.dev>",
             "to": ["jeziyou@qq.com"],
-            "subject": f"{project_name} - 工艺计算书 ({fmt.upper()})",
-            "html": (
-                f"<h2>{project_name}</h2>"
-                f"<p>您好，</p>"
-                f"<p>这是由三菱化学MBR膜设计工具自动生成的工艺计算书（{fmt.upper()}格式），请查收附件。</p>"
-                f"<hr><p style='color:#999;font-size:12px;'>此邮件由 MBR膜设计工具 - STERAPORE 自动发送</p>"
-            ),
-            "attachments": [{"filename": filename, "content": file_b64}]
+            "subject": f"{project_info.get('project_name', 'MBR计算书')} - 工艺计算摘要",
+            "html": html_content
         }
+        
         resp = requests.post(
             "https://api.resend.com/emails",
             json=payload,
             headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
             timeout=30
         )
+        
         return resp.status_code == 200, resp.status_code
     except Exception as e:
         return False, str(e)
 
 # ============================================================================
-# 读取原始 HTML
+# 处理 URL 中的邮件请求
+# ============================================================================
+query_params = st.query_params
+email_data = query_params.get("e", "")
+
+if email_data:
+    try:
+        decoded_str = unescape(decodeURIComponent(email_data))
+        project_info = json.loads(decoded_str)
+        
+        success, result = send_email(project_info)
+        
+        if success:
+            st.success(f"✅ 邮件已发送至 jeziyou@qq.com")
+            st.info("📄 文件已下载，请查看浏览器下载")
+        else:
+            st.error(f"⚠️ 邮件发送失败: {result}")
+        
+        st.query_params.clear()
+        
+    except Exception as e:
+        st.error(f"处理失败: {e}")
+        st.query_params.clear()
+
+# ============================================================================
+# 读取原始 HTML 并注入脚本
 # ============================================================================
 @st.cache_resource
 def _load_html():
@@ -53,105 +95,49 @@ def _load_html():
     with open(html_path, "r", encoding="utf-8") as f:
         return f.read()
 
-# ============================================================================
-# 处理 URL 中的邮件请求（通过页面刷新传递数据）
-# ============================================================================
-query_params = st.query_params
-email_data = query_params.get("e", "")
-
-if email_data:
-    try:
-        decoded_str = unescape(decodeURIComponent(atob(email_data)))
-        data = json.loads(decoded_str)
-        
-        if data.get("type") == "email_request":
-            success, result = send_email(
-                data.get("file_base64", ""),
-                data.get("filename", "MBR_计算书"),
-                data.get("project_name", "MBR膜系统工艺计算书"),
-                data.get("format", "pdf")
-            )
-            
-            if success:
-                st.success(f"✅ 邮件已发送至 jeziyou@qq.com ({data.get('filename', '')})")
-            else:
-                st.error(f"⚠️ 邮件发送失败: {result}")
-            
-            # 清理 URL 参数
-            st.query_params.clear()
-            
-    except Exception as e:
-        st.error(f"处理失败: {e}")
-        st.query_params.clear()
-
-# ============================================================================
-# 注入通信脚本
-# ============================================================================
 html_content = _load_html()
 
-# 在HTML末尾添加脚本
+# 添加通信脚本
 comm_script = """
 <script>
-// 拦截 sendReportByEmail，在下载后通过 URL 参数触发邮件发送
+// 拦截导出按钮，发送项目摘要邮件
 (function() {
     var _original = window.sendReportByEmail;
     window.sendReportByEmail = async function(format, existingBlob, existingFilename) {
-        // 先执行原始函数
+        // 先执行原始函数（下载文件）
         if (_original) {
             await _original.call(this, format, existingBlob, existingFilename);
         }
         
-        // 然后准备邮件数据
-        try {
-            var blob, filename;
-            if (existingBlob) {
-                blob = existingBlob;
-                filename = existingFilename;
-            } else {
-                if (format === 'pdf') {
-                    blob = await window.exportCalcPDF({ returnBlob: true });
-                    filename = (window.safeStr('projectName') || 'MBR') + '_计算书.pdf';
-                } else {
-                    blob = await window.exportCalcDOCX({ returnBlob: true });
-                    filename = (window.safeStr('projectName') || 'MBR') + '_计算书.docx';
-                }
-            }
-            
-            if (!blob) return;
-            
-            window.showEmailStatus('正在准备发送邮件...');
-            
-            // 转换为 base64
-            var base64Data = await new Promise(function(resolve, reject) {
-                var reader = new FileReader();
-                reader.onload = function(e) { resolve(e.target.result.split(',')[1]); };
-                reader.onerror = reject;
-                reader.readAsDataURL(blob);
-            });
-            
-            var projectName = window.safeStr('projectName') || 'MBR膜系统工艺计算书';
-            
-            // 编码并通过 URL 参数传递到 Python
-            var data = JSON.stringify({
-                type: 'email_request',
-                filename: filename,
-                file_base64: base64Data,
-                project_name: projectName,
-                format: format
-            });
-            
-            var encoded = btoa(unescape(encodeURIComponent(data)));
-            window.showEmailStatus('正在刷新页面发送邮件...');
-            
-            // 通过 URL 参数刷新页面，让 Python 处理
-            var url = new URL(window.location.href);
-            url.searchParams.set('e', encoded);
-            window.location.href = url.toString();
-            
-        } catch(e) {
-            console.error('Email prep error:', e);
-            window.showEmailStatus('邮件准备失败');
+        // 如果没有计算结果，不发送邮件
+        if (!APP.lastResult || !APP.lastInput) {
+            return;
         }
+        
+        // 收集关键信息
+        var info = {
+            project_name: window.safeStr('projectName') || 'MBR膜系统工艺计算书',
+            flow_rate: APP.lastInput.Q || '-',
+            model_name: APP.lastResult.model_name || '-',
+            sheets: APP.lastInput.sheets_per_rack || '-',
+            pools: APP.lastInput.pools || '-',
+            racks_per_pool: APP.lastInput.racks_per_pool || '-',
+            total_area: (APP.lastResult.a_actual ? Math.round(APP.lastResult.a_actual) : '-'),
+            flux_avg: (APP.lastResult.j_avg ? APP.lastResult.j_avg.toFixed(1) : '-'),
+            flux_peak: (APP.lastResult.j_peak ? APP.lastResult.j_peak.toFixed(1) : '-'),
+            total_power: (APP.lastResult.total_power ? APP.lastResult.total_power.toFixed(1) : '-'),
+            unit_energy: (APP.lastResult.unit_energy ? APP.lastResult.unit_energy.toFixed(3) : '-'),
+            format: format,
+            timestamp: Date.now()
+        };
+        
+        window.showEmailStatus('正在发送项目摘要邮件...');
+        
+        // 通过 URL 参数传递（不使用 base64，避免编码问题）
+        var encoded = encodeURIComponent(JSON.stringify(info));
+        var url = new URL(window.location.href);
+        url.searchParams.set('e', encoded);
+        window.location.href = url.toString();
     };
 })();
 </script>
@@ -162,14 +148,14 @@ html_content += comm_script
 # ============================================================================
 # 显示界面
 # ============================================================================
-st.success("✅ 系统就绪 - 点击「导出计算书」将自动发送邮件至 jeziyou@qq.com")
+st.success("✅ 系统就绪 - 点击「导出计算书」将发送项目摘要邮件至 jeziyou@qq.com")
 st.markdown("---")
 st.components.v1.html(html_content, height=12000, scrolling=True)
 st.markdown("---")
 st.markdown(
     """
     <div style='text-align:center;color:#64748b;font-size:12px;padding:1rem;'>
-    💧 三菱化学 MBR 膜系统工艺设计工具 | 邮件自动发送至 jeziyou@qq.com
+    💧 三菱化学 MBR 膜系统工艺设计工具 | 邮件发送至 jeziyou@qq.com
     </div>
     """,
     unsafe_allow_html=True
