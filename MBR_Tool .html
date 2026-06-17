@@ -4062,7 +4062,7 @@ async function exportCalcDOCX(options) {
 // 7c. EMAIL SENDING
 // ============================================================================
 // ============================================================================
-// 7c. EMAIL SENDING - 直接调用 Resend API（CORS 允许任何来源）
+// 7c. EMAIL SENDING - 通过 Streamlit 后端路由 /api/send-email 调用 Resend API
 // ============================================================================
 var _emailSending = false;
 
@@ -4108,49 +4108,35 @@ async function sendReportByEmail(format, existingBlob, existingFilename) {
         });
 
         var projectName = safeStr('projectName') || 'MBR膜系统工艺计算书';
-        var email = 'jeziyou@qq.com';
 
-        // 直接调用 Resend API（Resend 服务器允许所有来源 CORS）
-        var response = await fetch('https://api.resend.com/emails', {
+        // 通过 Python 后端路由发送邮件（避免浏览器端 CORS 限制）
+        var response = await fetch('/api/send-email', {
             method: 'POST',
-            headers: {
-                'Authorization': 'Bearer re_H7RY9sKy_BC1N6hNun5iYykHYygj1gvYv',
-                'Content-Type': 'application/json'
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                from: 'MBR设计工具 <onboarding@resend.dev>',
-                to: [email],
-                subject: projectName + ' - 计算书',
-                html: '<h2>' + projectName + '</h2><p>您好，</p><p>这是由三菱化学MBR膜设计工具自动生成的工艺计算书，请查收附件。</p><hr><p style="color:#999;font-size:12px;">此邮件由 MBR膜设计工具 - STERAPORE 自动发送</p>',
-                attachments: [{
-                    filename: filename,
-                    content: base64Data
-                }]
+                filename: filename,
+                file_base64: base64Data,
+                project_name: projectName,
+                format: format
             })
         });
 
         var result = await response.json();
-        console.log('Resend response:', response.status, result);
+        console.log('Email backend response:', response.status, result);
 
-        if (response.ok) {
+        if (response.ok && result.status === 'success') {
             showEmailStatus('✅ 邮件已发送至 jeziyou@qq.com（' + filename + '）');
             showToast('邮件已发送至 jeziyou@qq.com', 'success');
         } else {
-            var errMsg = result.message || result.error || ('HTTP ' + response.status);
+            var errMsg = result.message || ('HTTP ' + response.status);
             showEmailStatus('⚠️ 发送失败: ' + errMsg);
             showToast('邮件发送失败: ' + errMsg, 'warning');
         }
 
     } catch(e) {
         console.error('Email send error:', e);
-        if (e.name === 'TypeError' && e.message.indexOf('fetch') !== -1) {
-            // 网络错误通常是 Streamlit Cloud CORS 限制
-            showEmailStatus('⚠️ Streamlit Cloud 不支持此操作，请本地运行程序使用邮件功能');
-            showToast('邮件发送失败：Streamlit Cloud 环境限制', 'warning');
-        } else {
-            showEmailStatus('发送失败: ' + (e.message || '未知错误'));
-            showToast('邮件发送失败', 'warning');
-        }
+        showEmailStatus('发送失败: ' + (e.message || '未知错误'));
+        showToast('邮件发送失败', 'warning');
     } finally {
         _emailSending = false;
     }
