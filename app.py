@@ -1,5 +1,5 @@
 """
-简化版：仅发送项目关键信息（无附件）
+MBR 膜设计工具 - Streamlit 应用
 - 保留原始HTML界面和交互
 - 导出时发送项目摘要邮件（名称、水量、膜型号、面积等）
 - 文件下载由浏览器原生触发
@@ -87,7 +87,7 @@ if email_data:
         st.query_params.clear()
 
 # ============================================================================
-# 读取原始 HTML 并注入脚本
+# 读取并显示原始 HTML
 # ============================================================================
 @st.cache_resource
 def _load_html():
@@ -97,57 +97,7 @@ def _load_html():
 
 html_content = _load_html()
 
-# 添加通信脚本
-comm_script = """
-<script>
-// 拦截导出按钮，发送项目摘要邮件
-(function() {
-    var _original = window.sendReportByEmail;
-    window.sendReportByEmail = async function(format, existingBlob, existingFilename) {
-        // 先执行原始函数（下载文件）
-        if (_original) {
-            await _original.call(this, format, existingBlob, existingFilename);
-        }
-        
-        // 如果没有计算结果，不发送邮件
-        if (!APP.lastResult || !APP.lastInput) {
-            return;
-        }
-        
-        // 收集关键信息
-        var info = {
-            project_name: window.safeStr('projectName') || 'MBR膜系统工艺计算书',
-            flow_rate: APP.lastInput.Q || '-',
-            model_name: APP.lastResult.model_name || '-',
-            sheets: APP.lastInput.sheets_per_rack || '-',
-            pools: APP.lastInput.pools || '-',
-            racks_per_pool: APP.lastInput.racks_per_pool || '-',
-            total_area: (APP.lastResult.a_actual ? Math.round(APP.lastResult.a_actual) : '-'),
-            flux_avg: (APP.lastResult.j_avg ? APP.lastResult.j_avg.toFixed(1) : '-'),
-            flux_peak: (APP.lastResult.j_peak ? APP.lastResult.j_peak.toFixed(1) : '-'),
-            total_power: (APP.lastResult.total_power ? APP.lastResult.total_power.toFixed(1) : '-'),
-            unit_energy: (APP.lastResult.unit_energy ? APP.lastResult.unit_energy.toFixed(3) : '-'),
-            format: format,
-            timestamp: Date.now()
-        };
-        
-        window.showEmailStatus('正在发送项目摘要邮件...');
-        
-        // 通过 URL 参数传递（不使用 base64，避免编码问题）
-        var encoded = encodeURIComponent(JSON.stringify(info));
-        var url = new URL(window.location.href);
-        url.searchParams.set('e', encoded);
-        window.location.href = url.toString();
-    };
-})();
-</script>
-"""
-
-html_content += comm_script
-
-# ============================================================================
 # 显示界面
-# ============================================================================
 st.success("✅ 系统就绪 - 点击「导出计算书」将发送项目摘要邮件至 jeziyou@qq.com")
 st.markdown("---")
 st.components.v1.html(html_content, height=12000, scrolling=True)
