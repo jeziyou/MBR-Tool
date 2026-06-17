@@ -919,17 +919,19 @@
                         <i class="fa fa-calculator"></i> 计算
                     </button>
                     <button id="btnExportCalcPDF" class="btn btn-success btn-lg">
-                        <i class="fa fa-file-pdf-o"></i> 导出计算书 PDF
+                        <i class="fa fa-file-pdf-o"></i> 下载计算书 PDF
                     </button>
                     <button id="btnExportCalcDOCX" class="btn btn-primary btn-lg">
-                        <i class="fa fa-file-word-o"></i> 导出计算书 Word
+                        <i class="fa fa-file-word-o"></i> 下载计算书 Word
                     </button>
                 </div>
 
-                <!-- Email Send Section (hidden, auto-send in background) -->
-                <div class="card p-4 mt-4 no-print" id="emailSection" style="display:none;">
-                    <input type="hidden" id="emailAddress" value="jeziyou@qq.com">
-                    <span id="emailStatus" class="text-xs text-slate-400"></span>
+                <!-- Upload-to-email Hint -->
+                <div class="card p-4 mt-4 no-print" style="background:#f0f9ff;border:1px dashed #bae6fd;">
+                    <div style="font-size:13px;color:#0c4a6e;line-height:1.7;">
+                        <i class="fa fa-info-circle" style="color:#0284c7;"></i>
+                        <strong>下载完成后，</strong>请在页面左侧的 Streamlit 面板中点击"发送邮件"按钮，并选择刚才下载的 PDF/Word 文件，系统会由后端发送邮件至您的邮箱。
+                    </div>
                 </div>
             </div>
 
@@ -4075,100 +4077,13 @@ async function exportCalcDOCX(options) {
 // ============================================================================
 // 7c. EMAIL SENDING
 // ============================================================================
+// ============================================================================
+// 7c. EMAIL SENDING - Resend 在浏览器中会被 CORS 拦截，邮件发送移至 Python 后端
+// ============================================================================
 async function sendReportByEmail(format, existingBlob, existingFilename) {
-    console.log('sendReportByEmail called:', format, existingBlob ? 'has blob' : 'no blob');
-    console.log('APP.lastResult:', APP.lastResult ? 'exists' : 'null');
-    console.log('APP.lastInput:', APP.lastInput ? 'exists' : 'null');
-    
-    if (!APP.lastResult || !APP.lastInput) {
-        console.log('sendReportByEmail returning: no result/input');
-        showEmailStatus('邮件发送失败: 请先执行计算');
-        return;
-    }
-
-    var email = 'jeziyou@qq.com';
-    console.log('Sending to email:', email);
-    if (!email) {
-        showEmailStatus('邮件发送失败: 邮箱地址为空');
-        return;
-    }
-
-    showEmailStatus('正在发送邮件至 ' + email + '...');
-
-    var emailStatus = document.getElementById('emailStatus');
-
-    try {
-        var blob, filename, fileType;
-        if (existingBlob) {
-            blob = existingBlob;
-            filename = existingFilename;
-            fileType = format;
-        } else {
-            if (emailStatus) emailStatus.textContent = '正在生成报告...';
-            if (format === 'pdf') {
-                blob = await exportCalcPDF({ returnBlob: true });
-                filename = (safeStr('projectName') || 'MBR') + '_计算书.pdf';
-                fileType = 'pdf';
-            } else {
-                blob = await exportCalcDOCX({ returnBlob: true });
-                filename = (safeStr('projectName') || 'MBR') + '_计算书.docx';
-                fileType = 'docx';
-            }
-        }
-
-        if (!blob) return;
-
-        if (emailStatus) emailStatus.textContent = '正在后台发送邮件...';
-
-        var reader = new FileReader();
-        reader.onload = async function(e) {
-            var base64Data = e.target.result.split(',')[1];
-            
-            try {
-                var response = await fetch('https://api.resend.com/emails', {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': 'Bearer re_H7RY9sKy_BC1N6hNun5iYykHYygj1gvYv',
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        from: 'MBR设计工具 <onboarding@resend.dev>',
-                        to: [email],
-                        subject: (safeStr('projectName') || 'MBR膜系统工艺计算书') + ' - 计算书',
-                        html: '<h2>' + (safeStr('projectName') || 'MBR膜系统工艺计算书') + '</h2><p>您好，</p><p>这是由三菱化学MBR膜设计工具自动生成的工艺计算书，请查收附件。</p><hr><p style="color:#999;font-size:12px;">此邮件由 MBR膜设计工具 - STERAPORE 自动发送</p>',
-                        attachments: [{
-                            filename: filename,
-                            content: base64Data
-                        }]
-                    })
-                });
-
-                console.log('Email send response:', response.status);
-                var result = await response.json();
-                console.log('Email send result:', result);
-
-                if (response.status === 200) {
-                    if (emailStatus) emailStatus.textContent = '已发送至 ' + email;
-                    showToast('邮件已发送至 ' + email, 'success');
-                    console.log('Email sent to ' + email);
-                } else {
-                    if (emailStatus) emailStatus.textContent = '发送失败: ' + (result.error || result.message || '');
-                    showToast('邮件发送失败: ' + (result.error || result.message || '未知错误'), 'warning');
-                    console.error('Email send failed:', result);
-                }
-            } catch (fetchErr) {
-                console.error('Fetch error:', fetchErr);
-                if (emailStatus) emailStatus.textContent = '发送失败: 网络错误';
-                showToast('邮件发送失败: 无法连接到服务器', 'warning');
-            }
-        };
-        reader.readAsDataURL(blob);
-        
-    } catch (e) {
-        console.error('Email send error:', e);
-        if (emailStatus) emailStatus.textContent = '发送失败';
-        showEmailStatus('邮件发送失败: ' + (e.message || '未知错误'));
-    }
+    // 保留函数兼容性，实际上由 Streamlit 后端负责发送
+    console.log('sendReportByEmail: 邮件发送已移至 Streamlit 后端处理');
+    showToast('提示：请在左侧面板上传文件并发送邮件', 'info');
 }
 
 // ============================================================================
@@ -4238,7 +4153,7 @@ document.addEventListener('DOMContentLoaded', function() {
     var btnCalc = document.getElementById('btnCalculate');
     if (btnCalc) btnCalc.addEventListener('click', calculate);
 
-    // PDF export button (auto-send to email in background)
+    // PDF export button (纯前端下载，邮件发送由 Streamlit 后端处理)
     var btnReport = document.getElementById('btnExportCalcPDF');
     if (btnReport) btnReport.addEventListener('click', async function() {
         var blob = await exportCalcPDF({ returnBlob: true });
@@ -4246,13 +4161,11 @@ document.addEventListener('DOMContentLoaded', function() {
             var projName = safeStr('projectName') || 'MBR';
             var filename = (projName || 'MBR') + '_计算书.pdf';
             downloadBlob(blob, filename);
-            showToast('PDF导出成功', 'success');
-            // Auto-send in background
-            sendReportByEmail('pdf', blob, filename).catch(function(e) { console.error('Background email send failed:', e); });
+            showToast('PDF已下载；请在左侧面板上传文件发送邮件', 'success');
         }
     });
 
-    // Word export button (auto-send to email in background)
+    // Word export button (纯前端下载，邮件发送由 Streamlit 后端处理)
     var btnDOCX = document.getElementById('btnExportCalcDOCX');
     if (btnDOCX) btnDOCX.addEventListener('click', async function() {
         var blob = await exportCalcDOCX({ returnBlob: true });
@@ -4260,9 +4173,7 @@ document.addEventListener('DOMContentLoaded', function() {
             var projName = safeStr('projectName') || 'MBR';
             var filename = (projName || 'MBR') + '_计算书.docx';
             downloadBlob(blob, filename);
-            showToast('Word文档导出成功', 'success');
-            // Auto-send in background
-            sendReportByEmail('docx', blob, filename).catch(function(e) { console.error('Background email send failed:', e); });
+            showToast('Word文档已下载；请在左侧面板上传文件发送邮件', 'success');
         }
     });
 
