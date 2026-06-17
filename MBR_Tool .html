@@ -4074,7 +4074,7 @@ async function sendReportByEmail(format, existingBlob, existingFilename) {
     }
 
     _emailSending = true;
-    showEmailStatus('正在生成并准备发送...');
+    showEmailStatus('正在生成并发送邮件...');
 
     try {
         var blob, filename;
@@ -4098,9 +4098,8 @@ async function sendReportByEmail(format, existingBlob, existingFilename) {
             return;
         }
 
-        showEmailStatus('正在发送数据到后端...');
+        showEmailStatus('正在发送数据...');
 
-        // 将 blob 转换为 base64
         var base64Data = await new Promise(function(resolve, reject) {
             var reader = new FileReader();
             reader.onload = function(e) { resolve(e.target.result.split(',')[1]); };
@@ -4110,22 +4109,29 @@ async function sendReportByEmail(format, existingBlob, existingFilename) {
 
         var projectName = safeStr('projectName') || 'MBR膜系统工艺计算书';
 
-        // 通过 Streamlit.setComponentValue 发送给 Python 后端
-        if (window.Streamlit && window.Streamlit.setComponentValue) {
-            showEmailStatus('正在后台发送邮件至 jeziyou@qq.com...');
-            Streamlit.setComponentValue({
-                type: 'email_request',
+        // 直接 POST 到 Streamlit 后端路由
+        showEmailStatus('正在后台发送邮件至 jeziyou@qq.com...');
+        var response = await fetch('/api/send-email', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
                 filename: filename,
                 file_base64: base64Data,
                 project_name: projectName,
-                format: format,
-                timestamp: Date.now()
-            });
-            showEmailStatus('⏳ 正在处理，请稍候...');
+                format: format
+            })
+        });
+
+        var result = await response.json();
+        console.log('Email response:', response.status, result);
+
+        if (response.ok && result.status === 'success') {
+            showEmailStatus('✅ 邮件已发送至 jeziyou@qq.com（' + filename + '）');
+            showToast('邮件已发送至 jeziyou@qq.com', 'success');
         } else {
-            // 非 Streamlit 环境
-            console.warn('Streamlit 不可用');
-            showEmailStatus('Streamlit 环境不可用，请直接在页面下载文件');
+            var errMsg = result.message || ('HTTP ' + response.status);
+            showEmailStatus('⚠️ 发送失败: ' + errMsg);
+            showToast('邮件发送失败: ' + errMsg, 'warning');
         }
 
     } catch(e) {
