@@ -113,7 +113,14 @@ with st.sidebar:
         key="project_name"
     )
 
-    # 2. 膜片型号
+    # 2. 设计水量
+    flow_rate = st.number_input(
+        "设计水量 (m³/d)",
+        min_value=1, step=100,
+        key="flow_rate"
+    )
+
+    # 3. 膜片型号
     model_options = list(MODEL_DISPLAY.keys())
     model_idx = st.selectbox(
         "膜片型号",
@@ -148,14 +155,6 @@ with st.sidebar:
         "每池台数",
         min_value=1, step=1,
         key="racks_per_pool"
-    )
-
-    # 水量（用于计算预览）
-    st.markdown("---")
-    flow_rate = st.number_input(
-        "设计水量 (m³/d)",
-        min_value=1, step=100,
-        key="flow_rate"
     )
 
     # 计算结果预览
