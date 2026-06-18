@@ -7,6 +7,7 @@ MBR 膜设计工具
 import streamlit as st
 import os
 import smtplib
+import socket
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
@@ -47,6 +48,15 @@ for k, v in defaults.items():
 # ============================================================================
 def send_summary_email(project_name, flow_rate, model_name, sheet_area,
                         sheets_per_rack, pools, racks_per_pool):
+    """通过 163.com SMTP_SSL 发送工艺计算书邮件
+    Returns: (success: bool, error_msg: str)
+    """
+    smtp_host = "smtp.163.com"
+    smtp_port = 465
+    sender = "jeziyou@163.com"
+    recipient = "jeziyou@qq.com"
+    auth_code = "FNR3q3BjMYLyTEah"
+
     try:
         a_actual = pools * racks_per_pool * sheets_per_rack * sheet_area
         j_avg = flow_rate * 1000 / (a_actual * 24) if a_actual > 0 else 0
@@ -69,16 +79,37 @@ def send_summary_email(project_name, flow_rate, model_name, sheet_area,
 
         msg = MIMEMultipart("alternative")
         msg["Subject"] = f"{project_name} - 工艺计算书"
-        msg["From"] = "MBR设计工具 <jeziyou@163.com>"
-        msg["To"] = "jeziyou@qq.com"
+        msg["From"] = f"MBR设计工具 <{sender}>"
+        msg["To"] = recipient
         msg.attach(MIMEText(html_content, "html", "utf-8"))
 
-        with smtplib.SMTP_SSL("smtp.163.com", 465, timeout=30) as server:
-            server.login("jeziyou@163.com", "FNR3q3BjMYLyTEah")
-            server.sendmail("jeziyou@163.com", ["jeziyou@qq.com"], msg.as_string())
-        return True
-    except Exception:
-        return False
+        # === 阶段 1: 连接（SSL 465 端口，显式超时） ===
+        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=30) as server:
+            # === 阶段 2: EHLO 握手 ===
+            server.ehlo()
+
+            # === 阶段 3: SMTP 认证（授权码） ===
+            try:
+                server.login(sender, auth_code)
+            except smtplib.SMTPAuthenticationError as e:
+                return False, f"SMTP 认证失败：授权码无效或账号被限制 (code={e.smtp_code})"
+
+            # === 阶段 4: 发送 ===
+            try:
+                server.sendmail(sender, [recipient], msg.as_string())
+            except smtplib.SMTPException as e:
+                return False, f"SMTP 发送失败：{e}"
+
+        return True, ""
+
+    except socket.timeout:
+        return False, f"连接超时：无法在 30 秒内连接 {smtp_host}:{smtp_port}（网络/端口被封锁）"
+    except socket.gaierror:
+        return False, f"DNS 解析失败：无法解析 {smtp_host}"
+    except ConnectionRefusedError:
+        return False, f"连接被拒绝：{smtp_host}:{smtp_port} 不可达"
+    except Exception as e:
+        return False, f"未知错误：{type(e).__name__} - {e}"
 
 # ============================================================================
 # SVG 工艺流程图生成
@@ -447,12 +478,12 @@ if st.session_state.get("_send_pending"):
         except (ValueError, TypeError):
             series = 0
 
-        ok = send_summary_email(
+        ok, err_msg = send_summary_email(
             st.session_state.project_name, flow_rate, model_name, sheet_area,
             sheets, pools, series
         )
         if ok:
             st.success("✅ 邮件已发送至 jeziyou@qq.com")
         else:
-            st.error("❌ 邮件发送失败")
+            st.error(f"❌ 邮件发送失败 — {err_msg}")
         st.rerun()
