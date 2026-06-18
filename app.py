@@ -56,6 +56,7 @@ defaults = {
     "pools": 2,
     "racks_per_pool": 3,
     "flow_rate": 5000,
+    "iframe_version": 0,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -185,6 +186,7 @@ with st.sidebar:
         st.query_params["membraneSheets"] = str(sheets_per_rack)
         st.query_params["membranePools"] = str(pools)
         st.query_params["membraneSeries"] = str(racks_per_pool)
+        st.session_state.iframe_version += 1
         st.rerun()
 
     st.markdown("---")
@@ -195,9 +197,8 @@ with st.sidebar:
 # ============================================================================
 st.markdown("## 💧 三菱化学 MBR 膜系统工艺设计工具")
 
-@st.cache_resource
-def _load_html():
-    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "MBR_Tool .html"), "r", encoding="utf-8") as f:
-        return f.read()
-
-st.components.v1.html(_load_html(), height=12000, scrolling=True)
+_html_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "MBR_Tool .html")
+with open(_html_path, "r", encoding="utf-8") as f:
+    _html_content = f.read()
+_html_content += f"\n<!-- v{st.session_state.iframe_version} -->"
+st.components.v1.html(_html_content, height=12000, scrolling=True)
