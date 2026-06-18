@@ -5,7 +5,6 @@ MBR 膜设计工具
 """
 import streamlit as st
 import os
-import urllib.parse
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -178,22 +177,14 @@ with st.sidebar:
         else:
             st.error("❌ 邮件发送失败")
 
-        # 同步到HTML
-        params = {
-            "autoCalc": "1",
-            "projectName": project_name,
-            "flowRate": str(flow_rate),
-            "membraneModel": selected_model,
-            "membraneSheets": str(sheets_per_rack),
-            "membranePools": str(pools),
-            "membraneSeries": str(racks_per_pool),
-        }
-        query_string = urllib.parse.urlencode(params)
-        st.markdown(
-            f'<meta http-equiv="refresh" content="0;url=?{query_string}">',
-            unsafe_allow_html=True
-        )
-        st.stop()
+        # 同步到HTML（使用 query_params，不刷新页面）
+        st.query_params["autoCalc"] = "1"
+        st.query_params["projectName"] = project_name
+        st.query_params["flowRate"] = str(flow_rate)
+        st.query_params["membraneModel"] = selected_model
+        st.query_params["membraneSheets"] = str(sheets_per_rack)
+        st.query_params["membranePools"] = str(pools)
+        st.query_params["membraneSeries"] = str(racks_per_pool)
 
     st.markdown("---")
     st.caption("💡 点击「确认」后HTML自动同步参数并计算并发送邮件")
