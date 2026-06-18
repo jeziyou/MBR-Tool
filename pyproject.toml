@@ -1,0 +1,12 @@
+[project]
+name = "mbr-membrane-design-tool"
+version = "1.0.0"
+requires-python = ">=3.9,<=3.12"
+dependencies = [
+    "shiny>=1.0.0",
+    "shinywidgets",
+    "plotly",
+    "matplotlib",
+    "numpy",
+    "pandas",
+]

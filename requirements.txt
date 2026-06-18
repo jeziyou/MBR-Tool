@@ -1,0 +1,6 @@
+shiny>=1.0.0
+shinywidgets
+plotly
+matplotlib
+numpy
+pandas
