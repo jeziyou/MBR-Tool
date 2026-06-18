@@ -5,6 +5,7 @@ MBR 膜设计工具
 """
 import streamlit as st
 import os
+import json
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -56,6 +57,7 @@ defaults = {
     "pools": 2,
     "racks_per_pool": 3,
     "flow_rate": 5000,
+    "iframe_version": 0,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -177,25 +179,17 @@ with st.sidebar:
         else:
             st.error("❌ 邮件发送失败")
 
-        # 通过 postMessage 同步参数到 HTML iframe
-        st.markdown(f"""
-        <script>
-        (function() {{
-            var iframe = document.querySelector('iframe[title="st.components.v1.html"]');
-            if (iframe && iframe.contentWindow) {{
-                iframe.contentWindow.postMessage({{
-                    type: 'mbrSync',
-                    projectName: {project_name!r},
-                    flowRate: {str(flow_rate)!r},
-                    membraneModel: {selected_model!r},
-                    membraneSheets: {str(sheets_per_rack)!r},
-                    membranePools: {str(pools)!r},
-                    membraneSeries: {str(racks_per_pool)!r}
-                }}, '*');
-            }}
-        }})();
-        </script>
-        """, unsafe_allow_html=True)
+        # 存储同步数据，供 HTML 渲染时注入
+        st.session_state["_sync_data"] = {
+            "projectName": project_name,
+            "flowRate": str(flow_rate),
+            "membraneModel": selected_model,
+            "membraneSheets": str(sheets_per_rack),
+            "membranePools": str(pools),
+            "membraneSeries": str(racks_per_pool),
+        }
+        st.session_state.iframe_version += 1
+        st.rerun()
 
     st.markdown("---")
     st.caption("💡 点击「确认」后HTML自动同步参数并计算并发送邮件")
@@ -205,9 +199,21 @@ with st.sidebar:
 # ============================================================================
 st.markdown("## 💧 三菱化学 MBR 膜系统工艺设计工具")
 
-@st.cache_resource
-def _load_html():
-    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "MBR_Tool .html"), "r", encoding="utf-8") as f:
-        return f.read()
+_html_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "MBR_Tool .html")
+with open(_html_path, "r", encoding="utf-8") as f:
+    _html_content = f.read()
 
-st.components.v1.html(_load_html(), height=12000, scrolling=True)
+# 如果有同步数据，注入到 HTML 中
+sync_data = st.session_state.get("_sync_data")
+if sync_data:
+    inject_script = f"""
+<script>
+window.__mbrSyncData = {json.dumps(sync_data, ensure_ascii=False)};
+</script>
+"""
+    _html_content = _html_content.replace("</body>", inject_script + "</body>")
+    st.session_state["_sync_data"] = None
+
+# 版本号强制 iframe 重新渲染
+_html_content += f"\n<!-- v{st.session_state.iframe_version} -->"
+st.components.v1.html(_html_content, height=12000, scrolling=True)
