@@ -56,7 +56,6 @@ defaults = {
     "pools": 2,
     "racks_per_pool": 3,
     "flow_rate": 5000,
-    "iframe_version": 0,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -178,16 +177,25 @@ with st.sidebar:
         else:
             st.error("❌ 邮件发送失败")
 
-        # 同步到HTML（使用 query_params + rerun）
-        st.query_params["autoCalc"] = "1"
-        st.query_params["projectName"] = project_name
-        st.query_params["flowRate"] = str(flow_rate)
-        st.query_params["membraneModel"] = selected_model
-        st.query_params["membraneSheets"] = str(sheets_per_rack)
-        st.query_params["membranePools"] = str(pools)
-        st.query_params["membraneSeries"] = str(racks_per_pool)
-        st.session_state.iframe_version += 1
-        st.rerun()
+        # 通过 postMessage 同步参数到 HTML iframe
+        st.markdown(f"""
+        <script>
+        (function() {{
+            var iframe = document.querySelector('iframe[title="st.components.v1.html"]');
+            if (iframe && iframe.contentWindow) {{
+                iframe.contentWindow.postMessage({{
+                    type: 'mbrSync',
+                    projectName: {project_name!r},
+                    flowRate: {str(flow_rate)!r},
+                    membraneModel: {selected_model!r},
+                    membraneSheets: {str(sheets_per_rack)!r},
+                    membranePools: {str(pools)!r},
+                    membraneSeries: {str(racks_per_pool)!r}
+                }}, '*');
+            }}
+        }})();
+        </script>
+        """, unsafe_allow_html=True)
 
     st.markdown("---")
     st.caption("💡 点击「确认」后HTML自动同步参数并计算并发送邮件")
@@ -197,8 +205,9 @@ with st.sidebar:
 # ============================================================================
 st.markdown("## 💧 三菱化学 MBR 膜系统工艺设计工具")
 
-_html_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "MBR_Tool .html")
-with open(_html_path, "r", encoding="utf-8") as f:
-    _html_content = f.read()
-_html_content += f"\n<!-- v{st.session_state.iframe_version} -->"
-st.components.v1.html(_html_content, height=12000, scrolling=True)
+@st.cache_resource
+def _load_html():
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "MBR_Tool .html"), "r", encoding="utf-8") as f:
+        return f.read()
+
+st.components.v1.html(_load_html(), height=12000, scrolling=True)
