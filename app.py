@@ -1,7 +1,8 @@
 """
 MBR 膜设计工具
-- 侧边栏参数预设 → 确认后同步HTML + 发送邮件
-- 侧边栏数值不会恢复默认值
+- 侧边栏：项目名称 + 发送邮件按钮
+- 主界面：原 HTML 计算器
+- 发送时从 HTML 读取数据 → 后台发送邮件
 """
 import streamlit as st
 import os
@@ -26,38 +27,11 @@ MODEL_SHEET_AREA = {
     "50E0006SA": 6,
 }
 
-MODEL_DISPLAY = {
-    "56E0040SA": "56E0040SA - UF 0.05μm 40m²",
-    "63E0040SA": "63E0040SA - UF 0.1μm 40m²",
-    "62E0040SA": "62E0040SA - UF 0.2μm 40m²",
-    "60E0025SA": "60E0025SA - MF 0.4μm 25m²",
-    "55E0025SA": "55E0025SA - UF 0.05μm 25m²",
-    "50E0025SA": "50E0025SA - MF 0.4μm 25m²",
-    "55E0015SA": "55E0015SA - UF 0.05μm 15m²",
-    "60E0015SA": "60E0015SA - MF 0.4μm 15m²",
-    "50E0015SA": "50E0015SA - MF 0.4μm 15m²",
-    "50E0006SA": "50E0006SA - MF 0.4μm 6m²",
-}
-
-
-def get_sheets_range(sheet_area):
-    """根据膜面积返回每台膜片数范围（与HTML一致）"""
-    if sheet_area == 6:
-        return 5, 30
-    return 5, 60
-
-
 # ============================================================================
-# 初始化 session_state（侧边栏值不会恢复默认值）
+# 初始化 session_state
 # ============================================================================
 defaults = {
     "project_name": "MBR膜系统工艺计算书",
-    "model_idx": 2,
-    "sheets_per_rack": 42,
-    "pools": 2,
-    "racks_per_pool": 3,
-    "flow_rate": 5000,
-    "iframe_version": 0,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -102,118 +76,98 @@ def send_summary_email(project_name, flow_rate, model_name, sheet_area,
         return False
 
 # ============================================================================
-# 侧边栏：参数预设
+# 侧边栏：主要项目信息
 # ============================================================================
 with st.sidebar:
-    st.markdown("## ⚙️ 参数预设")
+    st.markdown("## 📋 主要项目信息")
     st.markdown("---")
 
-    # 1. 项目名称
-    project_name = st.text_input(
-        "项目名称",
-        key="project_name"
-    )
-
-    # 2. 设计水量
-    flow_rate = st.number_input(
-        "设计水量 (m³/d)",
-        min_value=1, step=100,
-        key="flow_rate"
-    )
-
-    # 3. 膜片型号
-    model_options = list(MODEL_DISPLAY.keys())
-    model_idx = st.selectbox(
-        "膜片型号",
-        range(len(model_options)),
-        format_func=lambda i: MODEL_DISPLAY[model_options[i]],
-        key="model_idx"
-    )
-    selected_model = model_options[model_idx]
-    sheet_area = MODEL_SHEET_AREA[selected_model]
-
-    # 3. 每台膜片数（范围与HTML一致）
-    sh_min, sh_max = get_sheets_range(sheet_area)
-    # 确保当前值在有效范围内
-    if st.session_state.sheets_per_rack < sh_min or st.session_state.sheets_per_rack > sh_max:
-        st.session_state.sheets_per_rack = max(sh_min, min(sh_max, st.session_state.sheets_per_rack))
-
-    sheets_per_rack = st.number_input(
-        "每台膜片数",
-        min_value=sh_min, max_value=sh_max, step=1,
-        key="sheets_per_rack"
-    )
-
-    # 4. 膜池数
-    pools = st.number_input(
-        "膜池数",
-        min_value=1, step=1,
-        key="pools"
-    )
-
-    # 5. 每池台数
-    racks_per_pool = st.number_input(
-        "每池台数",
-        min_value=1, step=1,
-        key="racks_per_pool"
-    )
-
-    # 计算结果预览
-    st.markdown("---")
-    a_actual = pools * racks_per_pool * sheets_per_rack * sheet_area
-    actual_flux = flow_rate * 1000 / (a_actual * 24) if a_actual > 0 else 0
-    st.metric("总膜面积", f"{int(a_actual):,} m²")
-    st.metric("平均通量", f"{actual_flux:.1f} LMH")
+    project_name = st.text_input("项目名称", key="project_name")
 
     st.markdown("---")
 
-    # 确认按钮
-    if st.button("✅ 确认", type="primary", use_container_width=True):
-        # 发送邮件
-        ok = send_summary_email(
-            project_name, flow_rate, selected_model, sheet_area,
-            sheets_per_rack, pools, racks_per_pool
-        )
-        if ok:
-            st.success("✅ 邮件已发送至 jeziyou@qq.com")
-        else:
-            st.error("❌ 邮件发送失败")
-
-        # 存储同步数据，供 HTML 渲染时注入
-        st.session_state["_sync_data"] = {
-            "projectName": project_name,
-            "flowRate": str(flow_rate),
-            "membraneModel": selected_model,
-            "membraneSheets": str(sheets_per_rack),
-            "membranePools": str(pools),
-            "membraneSeries": str(racks_per_pool),
-        }
-        st.session_state.iframe_version += 1
+    if st.button("📤 发送项目信息至邮箱", type="primary", use_container_width=True):
+        st.session_state["_send_pending"] = True
         st.rerun()
 
     st.markdown("---")
-    st.caption("💡 点击「确认」后HTML自动同步参数并计算并发送邮件")
+    st.caption("💡 在HTML中完成计算后，点击上方按钮发送项目信息至 jeziyou@qq.com")
 
 # ============================================================================
 # 主界面
 # ============================================================================
 st.markdown("## 💧 三菱化学 MBR 膜系统工艺设计工具")
 
+# 主 HTML iframe
 _html_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "MBR_Tool .html")
 with open(_html_path, "r", encoding="utf-8") as f:
     _html_content = f.read()
-
-# 如果有同步数据，注入到 HTML 中
-sync_data = st.session_state.get("_sync_data")
-if sync_data:
-    inject_script = f"""
-<script>
-window.__mbrSyncData = {json.dumps(sync_data, ensure_ascii=False)};
-</script>
-"""
-    _html_content = _html_content.replace("</body>", inject_script + "</body>")
-    st.session_state["_sync_data"] = None
-
-# 版本号强制 iframe 重新渲染
-_html_content += f"\n<!-- v{st.session_state.iframe_version} -->"
 st.components.v1.html(_html_content, height=12000, scrolling=True)
+
+# ============================================================================
+# 通信组件：从主 iframe 读取数据（仅在发送请求时）
+# ============================================================================
+if st.session_state.get("_send_pending"):
+    read_script = """
+    <script>
+    (function poll() {
+        var iframes = parent.document.querySelectorAll('iframe');
+        for (var i = 0; i < iframes.length; i++) {
+            try {
+                var doc = iframes[i].contentDocument;
+                if (doc && doc.getElementById('btnCalculate')) {
+                    var data = {
+                        projectName: doc.getElementById('projectName')?.value || '',
+                        flowRate: doc.getElementById('flowRate')?.value || '',
+                        membraneModel: doc.getElementById('membraneModel')?.value || '',
+                        membraneSheets: doc.getElementById('membraneSheets')?.value || '',
+                        membranePools: doc.getElementById('membranePools')?.value || '',
+                        membraneSeries: doc.getElementById('membraneSeries')?.value || '',
+                    };
+                    Streamlit.setComponentValue(data);
+                    return;
+                }
+            } catch(e) {}
+        }
+        setTimeout(poll, 300);
+    })();
+    </script>
+    """
+    result = st.components.v1.html(read_script, height=0)
+
+    if result and result != 0 and isinstance(result, dict):
+        st.session_state["_send_pending"] = False
+
+        # 解析数据
+        model_name = result.get("membraneModel", "")
+        sheet_area = MODEL_SHEET_AREA.get(model_name, 40)
+
+        try:
+            flow_rate = int(float(result.get("flowRate", 0)))
+        except (ValueError, TypeError):
+            flow_rate = 0
+
+        try:
+            sheets = int(result.get("membraneSheets", 0))
+        except (ValueError, TypeError):
+            sheets = 0
+
+        try:
+            pools = int(result.get("membranePools", 0))
+        except (ValueError, TypeError):
+            pools = 0
+
+        try:
+            series = int(result.get("membraneSeries", 0))
+        except (ValueError, TypeError):
+            series = 0
+
+        ok = send_summary_email(
+            st.session_state.project_name, flow_rate, model_name, sheet_area,
+            sheets, pools, series
+        )
+        if ok:
+            st.success("✅ 邮件已发送至 jeziyou@qq.com")
+        else:
+            st.error("❌ 邮件发送失败")
+        st.rerun()

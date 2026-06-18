@@ -5660,34 +5660,5 @@ async function exportQuickRefDOCX() {
 
 </script>
 
-<!-- ====== SYNC DATA FROM SIDEBAR ====== -->
-<script>
-(function() {
-    var data = window.__mbrSyncData;
-    if (!data) return;
-
-    function setVal(id, val) {
-        var el = document.getElementById(id);
-        if (!el) return;
-        el.value = val;
-        el.dispatchEvent(new Event('change', {bubbles: true}));
-    }
-
-    setVal('projectName', data.projectName);
-    setVal('flowRate', data.flowRate);
-    setVal('membraneModel', data.membraneModel);
-    setVal('membraneSheets', data.membraneSheets);
-    var poolsEl = document.getElementById('membranePools');
-    if (poolsEl) poolsEl.value = data.membranePools;
-    var seriesEl = document.getElementById('membraneSeries');
-    if (seriesEl) seriesEl.value = data.membraneSeries;
-
-    setTimeout(function() {
-        var btn = document.getElementById('btnCalculate');
-        if (btn) btn.click();
-    }, 500);
-})();
-</script>
-
 </body>
 </html>
