@@ -56,6 +56,7 @@ defaults = {
     "pools": 2,
     "racks_per_pool": 3,
     "flow_rate": 5000,
+    "iframe_key": 0,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -185,6 +186,7 @@ with st.sidebar:
         st.query_params["membraneSheets"] = str(sheets_per_rack)
         st.query_params["membranePools"] = str(pools)
         st.query_params["membraneSeries"] = str(racks_per_pool)
+        st.session_state.iframe_key += 1
 
     st.markdown("---")
     st.caption("💡 点击「确认」后HTML自动同步参数并计算并发送邮件")
@@ -199,4 +201,4 @@ def _load_html():
     with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "MBR_Tool .html"), "r", encoding="utf-8") as f:
         return f.read()
 
-st.components.v1.html(_load_html(), height=12000, scrolling=True)
+st.components.v1.html(_load_html(), height=12000, scrolling=True, key=f"iframe_{st.session_state.iframe_key}")
